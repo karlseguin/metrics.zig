@@ -10,7 +10,7 @@ const Opts = struct {
 };
 
 pub fn Counter(comptime V: type) type {
-	assertUnsignedInteger(V);
+	assertCounterType(V);
 	return union(enum) {
 		noop: void,
 		impl: *Impl,
@@ -84,7 +84,7 @@ pub fn Counter(comptime V: type) type {
 
 				try writer.writeAll(metric.name);
 				const count = @atomicLoad(V, &self.count, .Monotonic);
-				try std.fmt.formatInt(count, 10, .lower, .{}, writer);
+				try m.write(count, writer);
 				return writer.writeByte('\n');
 			}
 		};
@@ -93,7 +93,7 @@ pub fn Counter(comptime V: type) type {
 
 // Counter with labels
 pub fn CounterVec(comptime V: type, comptime L: type) type {
-	assertUnsignedInteger(V);
+	assertCounterType(V);
 	return union(enum) {
 		noop: void,
 		impl: *Impl,
@@ -210,7 +210,7 @@ pub fn CounterVec(comptime V: type, comptime L: type) type {
 
 					const value = kv.value_ptr.*;
 					try writer.writeAll(value.attributes);
-					try std.fmt.formatInt(value.count, 10, .lower, .{}, writer);
+					try m.write(value.count, writer);
 					try writer.writeByte('\n');
 				}
 			}
@@ -218,8 +218,9 @@ pub fn CounterVec(comptime V: type, comptime L: type) type {
 	};
 }
 
-fn assertUnsignedInteger(comptime T: type) void {
+fn assertCounterType(comptime T: type) void {
 	switch (@typeInfo(T)) {
+		.Float => return,
 		.Int => |int| {
 			if (int.signedness == .unsigned) return;
 		},
@@ -272,6 +273,36 @@ test "Counter: write" {
 	}
 }
 
+test "Counter: float incr/incrBy" {
+	var c = try Counter(f32).init(t.allocator, "t1", .{});
+	defer c.deinit(t.allocator);
+	c.incr();
+	try t.expectEqual(1, c.impl.count);
+	c.incrBy(12.1);
+	try t.expectEqual(13.1, c.impl.count);
+}
+
+test "Counter: float write" {
+	var arr = std.ArrayList(u8).init(t.allocator);
+	defer arr.deinit();
+
+	var c = try Counter(f64).init(t.allocator, "metric_cnt_2_x", .{});
+	defer c.deinit(t.allocator);
+
+	{
+		c.incr();
+		try c.write(arr.writer());
+		try t.expectString("# TYPE metric_cnt_2_x counter\nmetric_cnt_2_x 1\n", arr.items);
+	}
+
+	{
+		arr.clearRetainingCapacity();
+		c.incrBy(123.991);
+		try c.write(arr.writer());
+		try t.expectString("# TYPE metric_cnt_2_x counter\nmetric_cnt_2_x 124.991\n", arr.items);
+	}
+}
+
 test "CounterVec: noop incr/incrBy" {
 	// these should just not crash
 	var c = CounterVec(u32, struct{id: u32}){.noop = {}};
@@ -309,4 +340,30 @@ test "CounterVec: incr/incrBy + write" {
 	try c.incrBy(.{.id = "a"}, 20);
 	try c.write(arr.writer());
 	try t.expectString(preamble ++ "counter_vec_1{id=\"b\"} 1\ncounter_vec_1{id=\"a\"} 22\n", arr.items);
+}
+
+test "CounterVec: float incr/incrBy + write" {
+	var arr = std.ArrayList(u8).init(t.allocator);
+	defer arr.deinit();
+
+	const preamble = "# HELP counter_vec_xx_2 h1\n# TYPE counter_vec_xx_2 counter\n";
+
+	// these should just not crash
+	var c = try CounterVec(f32, struct{id: []const u8}).init(t.allocator, "counter_vec_xx_2", .{.help = "h1"});
+	defer c.deinit(t.allocator);
+
+	try c.incr(.{.id = "a"});
+	try c.write(arr.writer());
+	try t.expectString(preamble ++ "counter_vec_xx_2{id=\"a\"} 1\n", arr.items);
+
+	arr.clearRetainingCapacity();
+	try c.incr(.{.id = "b"});
+	try c.incr(.{.id = "a"});
+	try c.write(arr.writer());
+	try t.expectString(preamble ++ "counter_vec_xx_2{id=\"b\"} 1\ncounter_vec_xx_2{id=\"a\"} 2\n", arr.items);
+
+	arr.clearRetainingCapacity();
+	try c.incrBy(.{.id = "a"}, 0.25);
+	try c.write(arr.writer());
+	try t.expectString(preamble ++ "counter_vec_xx_2{id=\"b\"} 1\ncounter_vec_xx_2{id=\"a\"} 2.25\n", arr.items);
 }
