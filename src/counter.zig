@@ -149,7 +149,7 @@ pub fn CounterVec(comptime V: type, comptime L: type) type {
 		const Impl = struct {
 			vec: MetricVec(L),
 			allocator: Allocator,
-			mutex: std.Thread.Mutex,
+			lock: std.Thread.RwLock,
 			values: MetricVec(L).HashMap(Value),
 
 			const Value = struct {
@@ -159,7 +159,7 @@ pub fn CounterVec(comptime V: type, comptime L: type) type {
 
 			fn init(allocator: Allocator, comptime name: []const u8, opts: Opts) !Impl {
 				return .{
-					.mutex = .{},
+					.lock = .{},
 					.allocator = allocator,
 					.vec = try MetricVec(L).init(allocator, name, .counter, opts),
 					.values = MetricVec(L).HashMap(Value){},
@@ -185,27 +185,48 @@ pub fn CounterVec(comptime V: type, comptime L: type) type {
 			pub fn incrBy(self: *Impl, labels: L, count: V) !void {
 				const allocator = self.allocator;
 
-				self.mutex.lock();
-				defer self.mutex.unlock();
-				const gop = try self.values.getOrPut(allocator, labels);
-				if (gop.found_existing) {
-					gop.value_ptr.count += count;
-					return;
+				{
+					self.lock.lockShared();
+					defer self.lock.unlockShared();
+					if (self.values.getPtr(labels)) |existing| {
+						existing.count += count;
+						return;
+					}
 				}
+
+				// It's possible that another thread will come in and create this
+				// missing label, and we'll check for that, but we'll assume not and
+				// do our allocations here, outside of any locks.
+				const attributes = try MetricVec(L).buildAttributes(allocator, labels);
+				errdefer allocator.free(attributes);
+
+				const owned_labels = try MetricVec(L).dupe(allocator, labels);
+				errdefer MetricVec(L).free(allocator, owned_labels);
 
 				const counter = Value{
 					.count = count,
-					.attributes = try MetricVec(L).buildAttributes(allocator, labels),
+					.attributes = attributes,
 				};
 
+				self.lock.lock();
+				defer self.lock.unlock();
+
+				const gop = try self.values.getOrPut(allocator, owned_labels);
+				if (gop.found_existing) {
+					MetricVec(L).free(allocator, owned_labels);
+					allocator.free(attributes);
+					gop.value_ptr.count += count;
+				}
+
 				gop.value_ptr.* = counter;
-				gop.key_ptr.* = try MetricVec(L).dupe(allocator, labels);
 			}
 
 			pub fn remove(self: *Impl, labels: L) void {
-				self.mutex.lock();
-				defer self.mutex.unlock();
-				const kv = self.values.fetchRemove(labels) orelse return;
+				const kv = blk: {
+					self.lock.lock();
+					defer self.lock.unlock();
+					break :blk self.values.fetchRemove(labels) orelse return;
+				};
 
 				const allocator = self.allocator;
 				MetricVec(L).free(allocator, kv.key);
@@ -217,9 +238,8 @@ pub fn CounterVec(comptime V: type, comptime L: type) type {
 				try vec.write(writer);
 				const name = vec.name;
 
-				// TODO: reduce this lock!
-				self.mutex.lock();
-				defer self.mutex.unlock();
+				self.lock.lockShared();
+				defer self.lock.unlockShared();
 
 				var it = self.values.iterator();
 				while (it.next()) |kv| {
