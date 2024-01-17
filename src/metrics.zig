@@ -30,10 +30,10 @@ pub fn initializeNoop(comptime T: type) T {
 }
 
 pub fn write(metrics: anytype, writer: anytype) !void {
-	inline for (metrics) |m| {
-		@compileLog(m);
+	const fields = @typeInfo(@TypeOf(metrics)).Struct.fields;
+	inline for (fields) |f| {
+		try @field(metrics, f.name).write(writer);
 	}
-	_ = writer;
 }
 
 test {
