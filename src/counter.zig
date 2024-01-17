@@ -132,6 +132,13 @@ pub fn CounterVec(comptime V: type, comptime L: type) type {
 			}
 		}
 
+		pub fn remove(self: Self, labels: L) void {
+			switch (self) {
+				.noop => {},
+				.impl => |impl| impl.remove(labels),
+			}
+		}
+
 		pub fn write(self: Self, writer: anytype) !void {
 			switch (self) {
 				.noop => {},
@@ -193,6 +200,16 @@ pub fn CounterVec(comptime V: type, comptime L: type) type {
 
 				gop.value_ptr.* = counter;
 				gop.key_ptr.* = try MetricVec(L).dupe(allocator, labels);
+			}
+
+			pub fn remove(self: *Impl, labels: L) void {
+				self.mutex.lock();
+				defer self.mutex.unlock();
+				const kv = self.values.fetchRemove(labels) orelse return;
+
+				const allocator = self.allocator;
+				MetricVec(L).free(allocator, kv.key);
+				allocator.free(kv.value.attributes);
 			}
 
 			pub fn write(self: *Impl, writer: anytype) !void {
@@ -340,6 +357,12 @@ test "CounterVec: incr/incrBy + write" {
 	try c.incrBy(.{.id = "a"}, 20);
 	try c.write(arr.writer());
 	try t.expectString(preamble ++ "counter_vec_1{id=\"b\"} 1\ncounter_vec_1{id=\"a\"} 22\n", arr.items);
+
+	arr.clearRetainingCapacity();
+	c.remove(.{.id = "not_found"});
+	c.remove(.{.id = "a"});
+	try c.write(arr.writer());
+	try t.expectString(preamble ++ "counter_vec_1{id=\"b\"} 1\n", arr.items);
 }
 
 test "CounterVec: float incr/incrBy + write" {
