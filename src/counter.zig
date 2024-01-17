@@ -263,7 +263,7 @@ fn assertCounterType(comptime T: type) void {
 		},
 		else => {},
 	}
-	@compileError("Counter type must be an unsigned integer, got: " ++ @typeName(T));
+	@compileError("Counter type must be an unsigned integer or a float, got: " ++ @typeName(T));
 }
 
 const t = @import("t.zig");

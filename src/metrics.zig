@@ -1,6 +1,12 @@
 const std = @import("std");
 
-pub const Counter = @import("counter.zig").Counter;
+const counter = @import("counter.zig");
+pub const Counter = counter.Counter;
+pub const CounterVec = counter.CounterVec;
+
+const gauge = @import("gauge.zig");
+pub const Gauge = gauge.Gauge;
+pub const GaugeVec = gauge.GaugeVec;
 
 // This allows a library developer to safely use a library-wide metrics
 // instance by defaulting all metrics to "noop" variants. Library developers
