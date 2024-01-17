@@ -9,85 +9,91 @@ const Opts = struct {
 	help: ?[]const u8 = null,
 };
 
-pub const Counter = union(enum) {
-	noop: void,
-	impl: *Impl,
+pub fn Counter(comptime V: type) type {
+	assertUnsignedInteger(V);
+	return union(enum) {
+		noop: void,
+		impl: *Impl,
 
-	pub fn init(allocator: Allocator, comptime name: []const u8, opts: Opts) !Counter {
-		const impl = try allocator.create(Impl);
-		errdefer allocator.destroy(impl);
-		impl.* = try Impl.init(allocator, name, opts);
-		return .{.impl = impl};
-	}
+		const Self = @This();
 
-	pub fn incr(self: Counter) void {
-		switch (self) {
-			.noop => {},
-			.impl => |impl| impl.incr(),
-		}
-	}
-
-	pub fn incrBy(self: Counter, count: usize) void {
-		switch (self) {
-			.noop => {},
-			.impl => |impl| impl.incrBy(count),
-		}
-	}
-
-	pub fn write(self: Counter, writer: anytype) !void {
-		switch (self) {
-			.noop => {},
-			.impl => |impl| return impl.write(writer),
-		}
-	}
-
-	pub fn deinit(self: Counter, allocator: Allocator) void {
-		switch (self) {
-			.noop => {},
-			.impl => |impl| {
-				impl.deinit(allocator);
-				allocator.destroy(impl);
-			},
-		}
-	}
-
-	const Impl = struct {
-		count: usize,
-		metric: Metric,
-
-		fn init(allocator: Allocator, comptime name: []const u8, opts: Opts) !Impl {
-			return .{
-				.count = 0,
-				.metric = try Metric.init(allocator, name, .counter, opts),
-			};
+		pub fn init(allocator: Allocator, comptime name: []const u8, opts: Opts) !Self {
+			const impl = try allocator.create(Impl);
+			errdefer allocator.destroy(impl);
+			impl.* = try Impl.init(allocator, name, opts);
+			return .{.impl = impl};
 		}
 
-		fn deinit(self: Impl, allocator: Allocator) void {
-			self.metric.deinit(allocator);
+		pub fn incr(self: Self) void {
+			switch (self) {
+				.noop => {},
+				.impl => |impl| impl.incr(),
+			}
 		}
 
-		pub fn incr(self: *Impl) void {
-			self.incrBy(1);
+		pub fn incrBy(self: Self, count: V) void {
+			switch (self) {
+				.noop => {},
+				.impl => |impl| impl.incrBy(count),
+			}
 		}
 
-		pub fn incrBy(self: *Impl, count: usize) void {
-			_ = @atomicRmw(usize, &self.count, .Add, count, .Monotonic);
+		pub fn write(self: Self, writer: anytype) !void {
+			switch (self) {
+				.noop => {},
+				.impl => |impl| return impl.write(writer),
+			}
 		}
 
-		pub fn write(self: *const Impl, writer: anytype) !void {
-			const metric = &self.metric;
-			try metric.write(writer);
-
-			try writer.writeAll(metric.name);
-			const count = @atomicLoad(usize, &self.count, .Monotonic);
-			try std.fmt.formatInt(count, 10, .lower, .{}, writer);
-			return writer.writeByte('\n');
+		pub fn deinit(self: Self, allocator: Allocator) void {
+			switch (self) {
+				.noop => {},
+				.impl => |impl| {
+					impl.deinit(allocator);
+					allocator.destroy(impl);
+				},
+			}
 		}
+
+		const Impl = struct {
+			count: V,
+			metric: Metric,
+
+			fn init(allocator: Allocator, comptime name: []const u8, opts: Opts) !Impl {
+				return .{
+					.count = 0,
+					.metric = try Metric.init(allocator, name, .counter, opts),
+				};
+			}
+
+			fn deinit(self: Impl, allocator: Allocator) void {
+				self.metric.deinit(allocator);
+			}
+
+			pub fn incr(self: *Impl) void {
+				self.incrBy(1);
+			}
+
+			pub fn incrBy(self: *Impl, count: V) void {
+				_ = @atomicRmw(V, &self.count, .Add, count, .Monotonic);
+			}
+
+			pub fn write(self: *const Impl, writer: anytype) !void {
+				const metric = &self.metric;
+				try metric.write(writer);
+
+				try writer.writeAll(metric.name);
+				const count = @atomicLoad(V, &self.count, .Monotonic);
+				try std.fmt.formatInt(count, 10, .lower, .{}, writer);
+				return writer.writeByte('\n');
+			}
+		};
 	};
-};
+}
 
 // Counter with labels
-pub fn CounterVec(comptime T: type) type {
+pub fn CounterVec(comptime V: type, comptime L: type) type {
+	assertUnsignedInteger(V);
 	return union(enum) {
 		noop: void,
 		impl: *Impl,
@@ -112,14 +118,14 @@ pub fn CounterVec(comptime T: type) type {
 			}
 		}
 
-		pub fn incr(self: Self, labels: T) !void {
+		pub fn incr(self: Self, labels: L) !void {
 			switch (self) {
 				.noop => {},
 				.impl => |impl| return impl.incr(labels),
 			}
 		}
 
-		pub fn incrBy(self: Self, labels: T, count: usize) !void {
+		pub fn incrBy(self: Self, labels: L, count: V) !void {
 			switch (self) {
 				.noop => {},
 				.impl => |impl| return impl.incrBy(labels, count),
@@ -134,19 +140,22 @@ pub fn CounterVec(comptime T: type) type {
 		}
 
 		const Impl = struct {
-			vec: MetricVec(T),
+			vec: MetricVec(L),
 			allocator: Allocator,
 			mutex: std.Thread.Mutex,
-			values: MetricVec(T).HashMap(CounterVecValue),
+			values: MetricVec(L).HashMap(Value),
 
-			const V = MetricVec(T).V;
+			const Value = struct {
+				count: V,
+				attributes: []const u8,
+			};
 
 			fn init(allocator: Allocator, comptime name: []const u8, opts: Opts) !Impl {
 				return .{
 					.mutex = .{},
 					.allocator = allocator,
-					.vec = try MetricVec(T).init(allocator, name, .counter, opts),
-					.values = MetricVec(T).HashMap(CounterVecValue){},
+					.vec = try MetricVec(L).init(allocator, name, .counter, opts),
+					.values = MetricVec(L).HashMap(Value){},
 				};
 			}
 
@@ -156,17 +165,17 @@ pub fn CounterVec(comptime T: type) type {
 
 				var it = self.values.iterator();
 				while (it.next()) |kv| {
-					MetricVec(T).free(allocator, kv.key_ptr.*);
+					MetricVec(L).free(allocator, kv.key_ptr.*);
 					allocator.free(kv.value_ptr.attributes);
 				}
 				self.values.deinit(allocator);
 			}
 
-			pub fn incr(self: *Impl, labels: T) !void {
+			pub fn incr(self: *Impl, labels: L) !void {
 				return self.incrBy(labels, 1);
 			}
 
-			pub fn incrBy(self: *Impl, labels: T, count: usize) !void {
+			pub fn incrBy(self: *Impl, labels: L, count: V) !void {
 				const allocator = self.allocator;
 
 				self.mutex.lock();
@@ -177,13 +186,13 @@ pub fn CounterVec(comptime T: type) type {
 					return;
 				}
 
-				const counter = CounterVecValue{
+				const counter = Value{
 					.count = count,
-					.attributes = try MetricVec(T).buildAttributes(allocator, labels),
+					.attributes = try MetricVec(L).buildAttributes(allocator, labels),
 				};
 
 				gop.value_ptr.* = counter;
-				gop.key_ptr.* = try MetricVec(T).dupe(allocator, labels);
+				gop.key_ptr.* = try MetricVec(L).dupe(allocator, labels);
 			}
 
 			pub fn write(self: *Impl, writer: anytype) !void {
@@ -209,15 +218,20 @@ pub fn CounterVec(comptime T: type) type {
 	};
 }
 
-const CounterVecValue = struct {
-	count: usize,
-	attributes: []const u8,
-};
+fn assertUnsignedInteger(comptime T: type) void {
+	switch (@typeInfo(T)) {
+		.Int => |int| {
+			if (int.signedness == .unsigned) return;
+		},
+		else => {},
+	}
+	@compileError("Counter type must be an unsigned integer, got: " ++ @typeName(T));
+}
 
 const t = @import("t.zig");
 test "Counter: noop incr/incrBy" {
 	// these should just not crash
-	var c = Counter{.noop = {}};
+	var c = Counter(u32){.noop = {}};
 	defer c.deinit(t.allocator);
 	c.incr();
 	c.incrBy(10);
@@ -229,7 +243,7 @@ test "Counter: noop incr/incrBy" {
 }
 
 test "Counter: incr/incrBy" {
-	var c = try Counter.init(t.allocator, "t1", .{});
+	var c = try Counter(u32).init(t.allocator, "t1", .{});
 	defer c.deinit(t.allocator);
 	c.incr();
 	try t.expectEqual(1, c.impl.count);
@@ -241,7 +255,7 @@ test "Counter: write" {
 	var arr = std.ArrayList(u8).init(t.allocator);
 	defer arr.deinit();
 
-	var c = try Counter.init(t.allocator, "metric_cnt_1_x", .{});
+	var c = try Counter(u32).init(t.allocator, "metric_cnt_1_x", .{});
 	defer c.deinit(t.allocator);
 
 	{
@@ -260,7 +274,7 @@ test "Counter: write" {
 
 test "CounterVec: noop incr/incrBy" {
 	// these should just not crash
-	var c = CounterVec(struct{id: u32}){.noop = {}};
+	var c = CounterVec(u32, struct{id: u32}){.noop = {}};
 	defer c.deinit(t.allocator);
 	try c.incr(.{.id = 3});
 	try c.incrBy(.{.id = 10}, 20);
@@ -271,7 +285,6 @@ test "CounterVec: noop incr/incrBy" {
 	try t.expectEqual(0, arr.items.len);
 }
 
-
 test "CounterVec: incr/incrBy + write" {
 	var arr = std.ArrayList(u8).init(t.allocator);
 	defer arr.deinit();
@@ -279,7 +292,7 @@ test "CounterVec: incr/incrBy + write" {
 	const preamble = "# HELP counter_vec_1 h1\n# TYPE counter_vec_1 counter\n";
 
 	// these should just not crash
-	var c = try CounterVec(struct{id: []const u8}).init(t.allocator, "counter_vec_1", .{.help = "h1"});
+	var c = try CounterVec(u64, struct{id: []const u8}).init(t.allocator, "counter_vec_1", .{.help = "h1"});
 	defer c.deinit(t.allocator);
 
 	try c.incr(.{.id = "a"});

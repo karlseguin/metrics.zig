@@ -78,10 +78,10 @@ pub const Metric = struct {
 	}
 };
 
-pub fn MetricVec(comptime T: type) type {
-	const ti = @typeInfo(T);
+pub fn MetricVec(comptime L: type) type {
+	const ti = @typeInfo(L);
 	if (std.meta.activeTag(ti) != .Struct) {
-		@compileError("Vec type must be a struct, got: " ++ @typeName(T));
+		@compileError("Vec type must be a struct, got: " ++ @typeName(L));
 	}
 
 	const fields = ti.Struct.fields;
@@ -116,7 +116,7 @@ pub fn MetricVec(comptime T: type) type {
 		// So we create our own context (hash and eql) which supports the type allowed
 		// by our validateLabelType
 		pub fn HashMap(comptime V: type) type {
-			return std.HashMapUnmanaged(T, V, HashContext(T), 80);
+			return std.HashMapUnmanaged(L, V, HashContext(L), 80);
 		}
 
 		const Self = @This();
@@ -148,8 +148,8 @@ pub fn MetricVec(comptime T: type) type {
 		// the map, we need to create one. But the key, which is `value` has to be
 		// owned by the metric, since its lifetime has to be guaranteed to match
 		// the map.
-		pub fn dupe(allocator: Allocator, value: T) !T {
-			var owned: T = undefined;
+		pub fn dupe(allocator: Allocator, value: L) !L {
+			var owned: L = undefined;
 			inline for (fields) |f| {
 				switch (@typeInfo(f.type)) {
 					.Pointer => @field(owned, f.name) = try allocator.dupe(u8, @field(value, f.name)),
@@ -159,7 +159,7 @@ pub fn MetricVec(comptime T: type) type {
 			return owned;
 		}
 
-		pub fn free(allocator: Allocator, value: T) void {
+		pub fn free(allocator: Allocator, value: L) void {
 			inline for (fields) |f| {
 				switch (@typeInfo(f.type)) {
 					.Pointer => allocator.free(@field(value, f.name)),
@@ -168,7 +168,7 @@ pub fn MetricVec(comptime T: type) type {
 			}
 		}
 
-		pub fn buildAttributes(allocator: Allocator, values: T) ![]const u8 {
+		pub fn buildAttributes(allocator: Allocator, values: L) ![]const u8 {
 			var len: usize = 0;
 			var serialized: SerializedValues = undefined;
 			inline for (fields, 0..) |f, i| {
@@ -238,7 +238,7 @@ fn validateName(name: []const u8) void {
 }
 
 // https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels
-fn validateLabel(comptime name: []const u8, comptime tpe: type) void {
+fn validateLabel(comptime name: []const u8, comptime T: type) void {
 	if (name.len == 0) {
 		@compileError("Empty label name is not valid");
 	}
@@ -260,11 +260,11 @@ fn validateLabel(comptime name: []const u8, comptime tpe: type) void {
 		}
 	}
 
-	validateLabelType(tpe);
+	validateLabelType(T);
 }
 
-fn validateLabelType(comptime tpe: type) void {
-	switch (@typeInfo(tpe)) {
+fn validateLabelType(comptime T: type) void {
+	switch (@typeInfo(T)) {
 		.ErrorSet, .Enum, .Type, .Bool, .Int => return,
 		.Pointer => |ptr| {
 			switch (ptr.size) {
@@ -278,7 +278,7 @@ fn validateLabelType(comptime tpe: type) void {
 		},
 		else => {},
 	}
-	@compileError("Label data types " ++ @typeName(tpe) ++ " is not supported");
+	@compileError("Label data types " ++ @typeName(T) ++ " is not supported");
 }
 
 fn serializeValue(allocator: Allocator, value: anytype) !SerializedValue {
