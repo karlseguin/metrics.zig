@@ -22,11 +22,19 @@ pub const Histogram = histogram.Histogram;
 pub fn initializeNoop(comptime T: type) T {
 	switch (@typeInfo(T)) {
 		.Struct => |struct_info| {
-			var t: T = undefined;
+			var m: T = undefined;
 			inline for (struct_info.fields) |field| {
-				@field(t, field.name) = .{.noop = {}};
+				switch (@typeInfo(field.type)) {
+					.Union => @field(m, field.name) = .{.noop = {}},
+					else => {
+						if (field.default_value) |default_value_ptr| {
+							const default_value = @as(*align(1) const field.type, @ptrCast(default_value_ptr)).*;
+							@field(m, field.name) = default_value;
+						}
+					},
+				}
 			}
-			return t;
+			return m;
 		},
 		else => @compileError("initializeNoop expects a struct")
 	}
@@ -41,4 +49,18 @@ pub fn write(metrics: anytype, writer: anytype) !void {
 
 test {
 	std.testing.refAllDecls(@This());
+}
+
+const t = @import("t.zig");
+test "initializeNoop" {
+	const x = initializeNoop(struct{
+		status: u16 = 33,
+		hits: CounterVec(u32, struct{status: u16}),
+		active: Gauge(u64),
+		latency: Histogram(u32, null),
+	});
+	try t.expectEqual(33, x.status);
+	try t.expectEqual(.noop, std.meta.activeTag(x.hits));
+	try t.expectEqual(.noop, std.meta.activeTag(x.active));
+	try t.expectEqual(.noop, std.meta.activeTag(x.latency));
 }
