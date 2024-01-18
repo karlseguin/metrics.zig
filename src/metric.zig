@@ -4,8 +4,13 @@ const ascii = std.ascii;
 const Wyhash = std.hash.Wyhash;
 const Allocator = std.mem.Allocator;
 
+// Used by metrics that don't have labels (Counter, Gauge, Histogram). Owns the
+// metric name and the output preamble (the "# TYPE $type\n" and optional
+// "# HELP $help\n" lines)
 pub const Metric = struct {
+	// The name of the metric (with a space after)
 	name: []const u8,
+
 	// the # HELP and # TYPE lines
 	preamble: []const u8,
 
@@ -17,6 +22,9 @@ pub const Metric = struct {
 	pub fn init(allocator: Allocator, comptime name: []const u8, tpe: Type, opts: anytype) !Metric {
 		comptime validateName(name);
 		return .{
+			// For non-labeled metrics, the output is always:
+			//    $metric_name $value
+			// we might as well add the space here.
 			.name = name ++ " ",
 			.preamble = try preparePreamble(allocator, name, @tagName(tpe), opts.help),
 		};
@@ -31,13 +39,15 @@ pub const Metric = struct {
 	}
 
 	// The "preamble" is the optional "# HELP $DESC\n" and "# TYPE $TYPE\n" string
-	// appended before each metric. Help is optional and when null the "# HELP ..."
-	// line is omitted.
+	// which is output before the metric value. Help is optional, when null the
+	// "# HELP ..." line is omitted.
 	fn preparePreamble(allocator: Allocator, name: []const u8, tpe: []const u8, help_: ?[]const u8) ![]const u8 {
 		const help = help_ orelse {
 			return std.fmt.allocPrint(allocator, "# TYPE {s} {s}\n", .{name, tpe});
 		};
 
+		// Help text requires \\ and \n to be escaped. Let's count how many of those
+		// we have.
 		var escape_count: usize = 0;
 		for (help) |c| {
 			if (c == '\\' or c == '\n') {
@@ -47,7 +57,12 @@ pub const Metric = struct {
 
 		var h = help;
 		if (escape_count > 0) {
+			// We need to escape at least one special character. We need to allocate
+			// a new string to hold the escaped value
 			var pos: usize = 0;
+
+			// Since we know the original length and the # of characters that need to
+			// be escaped, we know the final length)
 			var escaped = try allocator.alloc(u8, help.len + escape_count);
 
 			for (help) |c| {
@@ -71,6 +86,9 @@ pub const Metric = struct {
 		}
 
 		defer {
+			// the escaped string we just allocated/populated doesn't need to exist
+			// beyond this function, because we're about to allocate the entire
+			// preamble, which includes a copy of this.
 			if (escape_count > 0) allocator.free(h);
 		}
 
@@ -78,6 +96,10 @@ pub const Metric = struct {
 	}
 };
 
+// Used by metrics that have labels (CounterVec, GaugeVec, HistogramVec). This
+// does Metric does (own the metric name, own the preamble), but also does a lot
+// more with respect to labels (beause, regardless of what the underlying metric
+// is, label handling is the same).
 pub fn MetricVec(comptime L: type) type {
 	const ti = @typeInfo(L);
 	if (std.meta.activeTag(ti) != .Struct) {
@@ -93,7 +115,11 @@ pub fn MetricVec(comptime L: type) type {
 	// an array of this type.
 	const SerializedValues = [fields.len]SerializedValue;
 
-	// The length of the serialized attributes without the values
+	// The length of the serialized attributes without the values.
+	// If L is struct{status: int, path: []const u8}, then this would be the length
+	// of:  {status="",path=""}
+	// We use this when we need to allocate the attribute string, taking this length
+	// and adding it to the length of the serialized values.
 	const static_attribute_len = comptime blk: {
 		// +2 for the '{' and  '}' around the entire attribute string
 		// +1 for the trailing space
@@ -108,13 +134,18 @@ pub fn MetricVec(comptime L: type) type {
 	};
 
 	return struct {
+		// The name of the metric. Unlike with a plain Metric, this doesn't include
+		// a trailing space (because attributes are glued to the metric name)
 		name: []const u8,
+		// The optional "# HELP $HELP\n" + the "# TYPE $TYPE]\n" line
 		preamble: []const u8,
+
+		// The label names (which are the names of L's fields)
 		labels: [fields.len][]const u8,
 
-		// std.AutoHashMap doesn't handle structs with []u8 (or []const u8) fields
+		// std.AutoHashMap doesn't handle structs with slices (i.e. []const u8) fields
 		// So we create our own context (hash and eql) which supports the type allowed
-		// by our validateLabelType
+		// by our validateLabel
 		pub fn HashMap(comptime V: type) type {
 			return std.HashMapUnmanaged(L, V, HashContext(L), 80);
 		}
@@ -143,11 +174,10 @@ pub fn MetricVec(comptime L: type) type {
 			return writer.writeAll(self.preamble);
 		}
 
-		// Metrics use the provided labels as the hashmap key using a custom hashmap
-		// context (see HashContext in this file). When the entry isn't found in
-		// the map, we need to create one. But the key, which is `value` has to be
-		// owned by the metric, since its lifetime has to be guaranteed to match
-		// the map.
+		// The key of labeled metrics is the label itself (L), or more specifically
+		// the values. These need to exist for the lifetime of the entry in the map
+		// so we dupe it. We only allow a small number of types in our labels and
+		// the only type that needs to be allocated is a []const u8.
 		pub fn dupe(allocator: Allocator, value: L) !L {
 			var owned: L = undefined;
 			inline for (fields) |f| {
@@ -159,6 +189,7 @@ pub fn MetricVec(comptime L: type) type {
 			return owned;
 		}
 
+		// Frees memory allocated by the above dupe function.
 		pub fn free(allocator: Allocator, value: L) void {
 			inline for (fields) |f| {
 				switch (@typeInfo(f.type)) {
@@ -168,7 +199,29 @@ pub fn MetricVec(comptime L: type) type {
 			}
 		}
 
+		// Every labeled metric has a hashmap of label => VALUE
+		// Where VALUE is going to be a metric specific value (like a number for
+		// a counter) as well as the serialized attribute string. For example
+		// given a CounterVec(u64, struct{status: u16}) and the label:
+		//   .{.status = 200}
+		// The counter's hashmap will have an extra with the key being the label
+		// itself, a u64 count and the serialized label value:
+		//   200 => .{
+		//       .count = 1,
+		//       .attributes = "{status=\"200\"}\n"
+		//   }
+		//
+		// Given:
+		//   .{.status = 200}
+		// this function builds the attribute string:
+		//   "{status=\"200\"}\n"
 		pub fn buildAttributes(allocator: Allocator, values: L) ![]const u8 {
+
+			// We begin by serializing all the values in L. We only support a few label
+			// types and some don't require allocation. The serializeValue function
+			// returns a SerializedValue which contains the serialized (string)
+			// representation of the value and a boolean to indicate if an allocation
+			// took place. This is needed so that we can properly clean up.
 			var len: usize = 0;
 			var serialized: SerializedValues = undefined;
 			inline for (fields, 0..) |f, i| {
@@ -177,6 +230,8 @@ pub fn MetricVec(comptime L: type) type {
 				len += s.str.len;
 			}
 
+			// Any allocations done in serializeValue is short lived, because we'll
+			// copy everything into the final attribute string.
 			defer {
 				for (serialized) |s| {
 					if (s.allocated) allocator.free(s.str);
@@ -210,22 +265,25 @@ pub fn MetricVec(comptime L: type) type {
 				buf[pos] = ',';
 				pos += 1;
 			}
+			// -1 to overwrite the last trailing comma
 			buf[pos-1] = '}';
+			// space between our attribute string and the metric value
 			buf[pos] = ' ';
 			return buf;
 		}
 	};
 }
 
+// Writes value to writer. Value can either be an integer or float.
 pub fn write(value: anytype, writer: anytype) !void {
 	switch (@typeInfo(@TypeOf(value))) {
 		.Int => return std.fmt.formatInt(value, 10, .lower, .{}, writer),
 		.Float => return std.fmt.formatFloatDecimal(value, .{}, writer),
-		else => unreachable, // there are guards that prevent this from being posisble
+		else => unreachable, // there are guards that prevent this from being possible
 	}
-
 }
 
+// Validates that a metric name is valid, based on:
 // https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels
 fn validateName(name: []const u8) void {
 	if (name.len == 0) {
@@ -246,7 +304,10 @@ fn validateName(name: []const u8) void {
 	}
 }
 
+// Validates that a label is valid. Validates both the name and the type.
+// The validity of the name is based on:
 // https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels
+// The validity of the type is based on what our HashContext supports
 fn validateLabel(comptime name: []const u8, comptime T: type) void {
 	if (name.len == 0) {
 		@compileError("Empty label name is not valid");
@@ -269,10 +330,6 @@ fn validateLabel(comptime name: []const u8, comptime T: type) void {
 		}
 	}
 
-	validateLabelType(T);
-}
-
-fn validateLabelType(comptime T: type) void {
 	switch (@typeInfo(T)) {
 		.ErrorSet, .Enum, .Type, .Bool, .Int => return,
 		.Pointer => |ptr| {
@@ -290,6 +347,7 @@ fn validateLabelType(comptime T: type) void {
 	@compileError("Label data types " ++ @typeName(T) ++ " is not supported");
 }
 
+// attribite value => text
 fn serializeValue(allocator: Allocator, value: anytype) !SerializedValue {
 	switch (@typeInfo(@TypeOf(value))) {
 		.Int => {
@@ -344,11 +402,13 @@ fn serializeValue(allocator: Allocator, value: anytype) !SerializedValue {
 	}
 }
 
+// When allocate is true, then str was allocated (and needed to be freed)
 const SerializedValue = struct {
 	str: []const u8,
 	allocated: bool = false,
 };
 
+// Return the number of digits in a number, including a negative sign.
 fn numberOfDigits(value: anytype) usize {
 	const adj : usize = if (value < 0) 1 else 0;
 	var v = @abs(value);
