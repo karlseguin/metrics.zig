@@ -211,7 +211,7 @@ const Env = struct {
 
 	fn init(allocator: Allocator) Env {
 		return .{
-			.verbose = readEnvBool(allocator, "TEST_VERBOSE", true),
+			.verbose = readEnvBool(allocator, "TEST_VERBOSE", false),
 			.fail_first = readEnvBool(allocator, "TEST_FAIL_FIRST", false),
 			.filter = readEnv(allocator, "TEST_FILTER"),
 		};

@@ -17,14 +17,15 @@ pub const Metric = struct {
 	const Type = enum {
 		counter,
 		gauge,
+		histogram,
 	};
 
-	pub fn init(allocator: Allocator, comptime name: []const u8, tpe: Type, opts: anytype) !Metric {
+	pub fn init(allocator: Allocator, comptime name: []const u8, comptime tpe: Type, opts: anytype) !Metric {
 		comptime validateName(name);
 		return .{
-			// For non-labeled metrics, the output is always:
+			// For non-labeled metrics counters and gauge, the output is always:
 			//    $metric_name $value
-			// we might as well add the space here.
+			// so we can include the space here
 			.name = name ++ " ",
 			.preamble = try preparePreamble(allocator, name, @tagName(tpe), opts.help),
 		};

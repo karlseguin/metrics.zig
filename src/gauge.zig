@@ -296,7 +296,7 @@ fn assertGaugeType(comptime T: type) void {
 		.Float, .Int => return,
 		else => {},
 	}
-	@compileError("Gauge type must be an integer or float, got: " ++ @typeName(T));
+	@compileError("Gauge metric must be an integer or float, got: " ++ @typeName(T));
 }
 
 const t = @import("t.zig");
