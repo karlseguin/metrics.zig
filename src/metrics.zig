@@ -57,7 +57,7 @@ test "initializeNoop" {
 		status: u16 = 33,
 		hits: CounterVec(u32, struct{status: u16}),
 		active: Gauge(u64),
-		latency: Histogram(u32, null),
+		latency: Histogram(u32, &.{0, 2}),
 	});
 	try t.expectEqual(33, x.status);
 	try t.expectEqual(.noop, std.meta.activeTag(x.hits));

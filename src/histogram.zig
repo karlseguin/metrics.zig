@@ -9,9 +9,8 @@ const Opts = struct {
 	help: ?[]const u8 = null,
 };
 
-pub fn Histogram(comptime V: type, comptime upper_bounds_: ?[]const V) type {
+pub fn Histogram(comptime V: type, comptime upper_bounds: []const V) type {
 	assertHistogramType(V);
-	const upper_bounds = upper_bounds_ orelse defaultUpperBounds(V);
 	assertUpperBounds(upper_bounds);
 
 	return union(enum) {
@@ -179,26 +178,6 @@ fn assertHistogramType(comptime T: type) void {
 	@compileError("Histogram metric must be an unsigned integer or a float, got: " ++ @typeName(T));
 }
 
-fn defaultUpperBounds(comptime T: type) []const T {
-	switch (@typeInfo(T)) {
-		.Float => |float| switch (float.bits) {
-			32 => return &.{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10},
-			64 => return &.{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10},
-			else => @compileError("An explicit list of buckets must be provided for non 32-bit and 64-bit histograms, got: " ++ @typeName(T)),
-		},
-		.Int => |int| {
-			if (int.signedness == .unsigned) {
-				if (int.bits >= 16) {
-					return &.{0, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000};
-				}
-				@compileError("An explicit list of buckets must be provided for histograms with integers less than 16 bits, got: " ++ @typeName(T));
-			}
-		},
-		else => {},
-	}
-	@compileError("Histogram type must be an unsigned integer or float, got: " ++ @typeName(T));
-}
-
 fn assertUpperBounds(upper_bounds: anytype) void {
 	if (upper_bounds.len == 0) {
 		@compileError("Histogram upper bound cannot be empty");
@@ -215,7 +194,7 @@ fn assertUpperBounds(upper_bounds: anytype) void {
 const t = @import("t.zig");
 test "Histogram: noop " {
 	// these should just not crash
-	var h = Histogram(u32, null){.noop = {}};
+	var h = Histogram(u32, &.{0}){.noop = {}};
 	defer h.deinit(t.allocator);
 	h.observe(2);
 
@@ -226,7 +205,7 @@ test "Histogram: noop " {
 }
 
 test "Histogram" {
-	var h = try Histogram(f64, null).init(t.allocator, "hst_1", .{});
+	var h = try Histogram(f64, &.{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10}).init(t.allocator, "hst_1", .{});
 	defer h.deinit(t.allocator);
 
 	var i: f64 = 0.001;

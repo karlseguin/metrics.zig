@@ -82,7 +82,6 @@ pub fn Counter(comptime V: type) type {
 				const metric = &self.metric;
 				try metric.write(writer);
 
-				try writer.writeAll(metric.name);
 				const count = @atomicLoad(V, &self.count, .Monotonic);
 				try m.write(count, writer);
 				return writer.writeByte('\n');

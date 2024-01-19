@@ -92,10 +92,7 @@ pub fn Gauge(comptime V: type) type {
 			pub fn write(self: *const Impl, writer: anytype) !void {
 				const metric = &self.metric;
 				try metric.write(writer);
-
-				try writer.writeAll(metric.name);
-				const value = @atomicLoad(V, &self.value, .Monotonic);
-				try m.write(value, writer);
+				try m.write(@atomicLoad(V, &self.value, .Monotonic), writer);
 				return writer.writeByte('\n');
 			}
 		};
