@@ -167,6 +167,251 @@ pub fn Histogram(comptime V: type, comptime upper_bounds: []const V) type {
 	};
 }
 
+pub fn HistogramVec(comptime V: type, comptime L: type, comptime upper_bounds: []const V) type {
+	assertHistogramType(V);
+	assertUpperBounds(upper_bounds);
+
+	return union(enum) {
+		noop: void,
+		impl: *Impl,
+
+		const Self = @This();
+
+		pub fn init(allocator: Allocator, comptime name: []const u8, opts: Opts) !Self {
+			const impl = try allocator.create(Impl);
+			errdefer allocator.destroy(impl);
+			impl.* = try Impl.init(allocator, name, opts);
+			return .{.impl = impl};
+		}
+
+		pub fn observe(self: Self, labels: L, value: V) !void {
+			switch (self) {
+				.noop => {},
+				.impl => |impl| return impl.observe(labels, value),
+			}
+		}
+
+		pub fn write(self: Self, writer: anytype) !void {
+			switch (self) {
+				.noop => {},
+				.impl => |impl| return impl.write(writer),
+			}
+		}
+
+		pub fn deinit(self: Self) void {
+			switch (self) {
+				.noop => {},
+				.impl => |impl| {
+					const allocator = impl.allocator;
+					impl.deinit();
+					allocator.destroy(impl);
+				},
+			}
+		}
+
+		const Impl = struct {
+			vec: MetricVec(L),
+			allocator: Allocator,
+			lock: std.Thread.RwLock,
+			values: MetricVec(L).HashMap(Value),
+			output_sum_prefix: []const u8,
+			output_count_prefix: []const u8,
+			output_bucket_prefixes: [upper_bounds.len][]const u8,
+			output_bucket_inf_prefix: []const u8,
+
+			const Value = struct {
+				sum: V,
+				count: usize,
+				buckets: [upper_bounds.len]V,
+				// this gets glued to our output_bucket_prefixes
+				attributes: []const u8,
+
+				fn observe(self: *Value, value: V) void {
+					self.sum += value;
+					self.count += 1;
+
+					const idx = blk: {
+						for (upper_bounds, 0..) |upper, i| {
+							if (value < upper) {
+								break :blk i;
+							}
+						}
+						// this is our implicit bucket to +Inf. Implicit because the count
+						// and sum, updated above, will contain this entry
+						return;
+					};
+					self.buckets[idx] += 1;
+				}
+			};
+
+			fn init(allocator: Allocator, comptime name: []const u8, opts: Opts) !Impl {
+				const vec = try MetricVec(L).init(allocator, name, .histogram, opts);
+				errdefer vec.deinit(allocator);
+
+				const output_sum_prefix = try std.fmt.allocPrint(allocator, "\n{s}_sum", .{name});
+				errdefer allocator.free(output_sum_prefix);
+
+				const output_count_prefix = try std.fmt.allocPrint(allocator, "\n{s}_count", .{name});
+				errdefer allocator.free(output_count_prefix);
+
+				const output_bucket_inf_prefix = try std.fmt.allocPrint(allocator, "{s}_bucket{{le=\"+Inf\",", .{name});
+				errdefer allocator.free(output_bucket_inf_prefix);
+
+				var output_bucket_prefixes: [upper_bounds.len][]const u8 = undefined;
+				var initialized: usize = 0;
+				errdefer {
+					for (0..initialized) |i| {
+						allocator.free(output_bucket_prefixes[i]);
+					}
+				}
+
+				for (upper_bounds, 0..) |upper, i| {
+					output_bucket_prefixes[i] = try std.fmt.allocPrint(allocator, "{s}_bucket{{le=\"{d}\",", .{name, upper});
+					initialized += 1;
+				}
+
+				return .{
+					.vec = vec,
+					.lock = .{},
+					.allocator = allocator,
+					.values = MetricVec(L).HashMap(Value){},
+					.output_sum_prefix = output_sum_prefix,
+					.output_count_prefix = output_count_prefix,
+					.output_bucket_prefixes = output_bucket_prefixes,
+					.output_bucket_inf_prefix = output_bucket_inf_prefix,
+				};
+			}
+
+			fn deinit(self: *Impl) void {
+				const allocator = self.allocator;
+				self.vec.deinit(allocator);
+				allocator.free(self.output_sum_prefix);
+				allocator.free(self.output_count_prefix);
+				allocator.free(self.output_bucket_inf_prefix);
+				for (self.output_bucket_prefixes) |obf| {
+					allocator.free(obf);
+				}
+
+				var it = self.values.iterator();
+				while (it.next()) |kv| {
+					MetricVec(L).free(allocator, kv.key_ptr.*);
+					allocator.free(kv.value_ptr.attributes);
+				}
+				self.values.deinit(allocator);
+			}
+
+			pub fn observe(self: *Impl, labels: L, value: V) !void {
+				const allocator = self.allocator;
+
+				{
+					self.lock.lockShared();
+					defer self.lock.unlockShared();
+					if (self.values.getPtr(labels)) |existing| {
+						existing.observe(value);
+						return;
+					}
+				}
+
+				// It's possible that another thread will come in and create this
+				// missing label, and we'll check for that, but we'll assume not and
+				// do our allocations here, outside of any locks.
+				const attributes = try MetricVec(L).buildAttributes(allocator, labels);
+				errdefer allocator.free(attributes);
+
+				const owned_labels = try MetricVec(L).dupe(allocator, labels);
+				errdefer MetricVec(L).free(allocator, owned_labels);
+
+				const histogram = Value{
+					.sum = 0,
+					.count = 0,
+					.attributes = attributes,
+					.buckets = std.mem.zeroes([upper_bounds.len]V),
+				};
+
+				self.lock.lock();
+				defer self.lock.unlock();
+
+				const gop = try self.values.getOrPut(allocator, owned_labels);
+				if (gop.found_existing) {
+					MetricVec(L).free(allocator, owned_labels);
+					allocator.free(attributes);
+				} else {
+					gop.value_ptr.* = histogram;
+				}
+
+				gop.value_ptr.observe(value);
+			}
+
+			pub fn remove(self: *Impl, labels: L) void {
+				const kv = blk: {
+					self.lock.lock();
+					defer self.lock.unlock();
+					break :blk self.values.fetchRemove(labels) orelse return;
+				};
+
+				const allocator = self.allocator;
+				MetricVec(L).free(allocator, kv.key);
+				allocator.free(kv.value.attributes);
+			}
+
+			pub fn write(self: *Impl, writer: anytype) !void {
+				const vec = &self.vec;
+				try vec.write(writer);
+
+				const output_sum_prefix = self.output_sum_prefix;
+				const output_count_prefix = self.output_count_prefix;
+				const output_bucket_inf_prefix = self.output_bucket_inf_prefix;
+
+				self.lock.lockShared();
+				defer self.lock.unlockShared();
+
+				var it = self.values.iterator();
+				while (it.next()) |kv| {
+					var sum: V = 0;
+					const value = kv.value_ptr.*;
+					const attributes = value.attributes;
+					const append_attributes = attributes[1..];
+					for (self.output_bucket_prefixes, 0..) |prefix, i| {
+						sum += value.buckets[i];
+						try writer.writeAll(prefix);
+						try writer.writeAll(append_attributes);
+						try m.write(sum, writer);
+						try writer.writeByte('\n');
+					}
+
+					const total_count = value.count;
+					{
+						// write +Inf
+						try writer.writeAll(output_bucket_inf_prefix);
+						try writer.writeAll(append_attributes);
+						try std.fmt.formatInt(total_count, 10, .lower, .{}, writer);
+					}
+
+					{
+						//write sum
+						// this includes a leading newline, hence we didn't need to write
+						// it after our output_bucket_inf_prefix
+						try writer.writeAll(output_sum_prefix);
+						try writer.writeAll(attributes);
+						try m.write(value.sum, writer);
+					}
+
+					{
+						//write count
+						// this includes a leading newline, hence we didn't need to write
+						// it after our output_sum_prefix
+						try writer.writeAll(output_count_prefix);
+						try writer.writeAll(attributes);
+						try std.fmt.formatInt(total_count, 10, .lower, .{}, writer);
+						try writer.writeByte('\n');
+					}
+				}
+			}
+		};
+	};
+}
+
+
 fn assertHistogramType(comptime T: type) void {
 	switch (@typeInfo(T)) {
 		.Float => return,
@@ -232,6 +477,70 @@ test "Histogram" {
 \\hst_1_bucket{le="+Inf"} 1000
 \\hst_1_sum 2116.7737194191777
 \\hst_1_count 1000
+\\
+, arr.items);
+}
+
+test "HistogramVec: noop " {
+	// these should just not crash
+	var h = HistogramVec(u32, struct{status: u16}, &.{0}){.noop = {}};
+	defer h.deinit();
+	try h.observe(.{.status = 200}, 2);
+
+	var arr = std.ArrayList(u8).init(t.allocator);
+	defer arr.deinit();
+	try h.write(arr.writer());
+	try t.expectEqual(0, arr.items.len);
+}
+
+test "HistogramVec" {
+	var h = try HistogramVec(f64, struct{status: u16}, &.{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10}).init(t.allocator, "hst_1", .{});
+	defer h.deinit();
+
+	var i: f64 = 0.001;
+	for (0..1000) |_| {
+		i = i + i / 100;
+		try h.observe(.{.status = 200}, i);
+	}
+
+	i = 0.02;
+	for (0..100) |_| {
+		i = i + i / 50;
+		try h.observe(.{.status = 400}, i);
+	}
+
+	var arr = std.ArrayList(u8).init(t.allocator);
+	defer arr.deinit();
+	try h.write(arr.writer());
+	try t.expectString(\\# TYPE hst_1 histogram
+\\hst_1_bucket{le="0.005",status="200"} 161
+\\hst_1_bucket{le="0.01",status="200"} 231
+\\hst_1_bucket{le="0.025",status="200"} 323
+\\hst_1_bucket{le="0.05",status="200"} 393
+\\hst_1_bucket{le="0.1",status="200"} 462
+\\hst_1_bucket{le="0.25",status="200"} 554
+\\hst_1_bucket{le="0.5",status="200"} 624
+\\hst_1_bucket{le="1",status="200"} 694
+\\hst_1_bucket{le="2.5",status="200"} 786
+\\hst_1_bucket{le="5",status="200"} 855
+\\hst_1_bucket{le="10",status="200"} 925
+\\hst_1_bucket{le="+Inf",status="200"} 1000
+\\hst_1_sum{status="200"} 2116.7737194191777
+\\hst_1_count{status="200"} 1000
+\\hst_1_bucket{le="0.005",status="400"} 0
+\\hst_1_bucket{le="0.01",status="400"} 0
+\\hst_1_bucket{le="0.025",status="400"} 11
+\\hst_1_bucket{le="0.05",status="400"} 46
+\\hst_1_bucket{le="0.1",status="400"} 81
+\\hst_1_bucket{le="0.25",status="400"} 100
+\\hst_1_bucket{le="0.5",status="400"} 100
+\\hst_1_bucket{le="1",status="400"} 100
+\\hst_1_bucket{le="2.5",status="400"} 100
+\\hst_1_bucket{le="5",status="400"} 100
+\\hst_1_bucket{le="10",status="400"} 100
+\\hst_1_bucket{le="+Inf",status="400"} 100
+\\hst_1_sum{status="400"} 6.369539040617386
+\\hst_1_count{status="400"} 100
 \\
 , arr.items);
 }

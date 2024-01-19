@@ -10,6 +10,7 @@ pub const GaugeVec = gauge.GaugeVec;
 
 const histogram = @import("histogram.zig");
 pub const Histogram = histogram.Histogram;
+pub const HistogramVec = histogram.HistogramVec;
 
 // This allows a library developer to safely use a library-wide metrics
 // instance by defaulting all metrics to "noop" variants. Library developers

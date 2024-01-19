@@ -107,10 +107,11 @@ pub fn CounterVec(comptime V: type, comptime L: type) type {
 			return .{.impl = impl};
 		}
 
-		pub fn deinit(self: Self, allocator: Allocator) void {
+		pub fn deinit(self: Self) void {
 			switch (self) {
 				.noop => {},
 				.impl => |impl| {
+					const allocator = impl.allocator;
 					impl.deinit();
 					allocator.destroy(impl);
 				},
@@ -342,7 +343,7 @@ test "Counter: float write" {
 test "CounterVec: noop incr/incrBy" {
 	// these should just not crash
 	var c = CounterVec(u32, struct{id: u32}){.noop = {}};
-	defer c.deinit(t.allocator);
+	defer c.deinit();
 	try c.incr(.{.id = 3});
 	try c.incrBy(.{.id = 10}, 20);
 
@@ -360,7 +361,7 @@ test "CounterVec: incr/incrBy + write" {
 
 	// these should just not crash
 	var c = try CounterVec(u64, struct{id: []const u8}).init(t.allocator, "counter_vec_1", .{.help = "h1"});
-	defer c.deinit(t.allocator);
+	defer c.deinit();
 
 	try c.incr(.{.id = "a"});
 	try c.write(arr.writer());
@@ -392,7 +393,7 @@ test "CounterVec: float incr/incrBy + write" {
 
 	// these should just not crash
 	var c = try CounterVec(f32, struct{id: []const u8}).init(t.allocator, "counter_vec_xx_2", .{.help = "h1"});
-	defer c.deinit(t.allocator);
+	defer c.deinit();
 
 	try c.incr(.{.id = "a"});
 	try c.write(arr.writer());
