@@ -199,7 +199,11 @@ pub fn GaugeVec(comptime V: type, comptime L: type) type {
 			}
 
 			pub fn incrBy(self: *Impl, labels: L, value: V) !void {
-				return self.withValue(labels, value, incrCallback);
+				return self.withValue(labels, value, atomicIncrCallback, incrCallback);
+			}
+
+			fn atomicIncrCallback(value: V, entry: *Value) void {
+				entry.value += value;
 			}
 
 			fn incrCallback(value: V, entry: *Value) void {
@@ -207,10 +211,14 @@ pub fn GaugeVec(comptime V: type, comptime L: type) type {
 			}
 
 			pub fn set(self: *Impl, labels: L, value: V) !void {
-				return self.withValue(labels, value, setCallback);
+				return self.withValue(labels, value, atomicSetCallback, setCallback);
 			}
 
 			fn setCallback(value: V, entry: *Value) void {
+				entry.value = value;
+			}
+
+			fn atomicSetCallback(value: V, entry: *Value) void {
 				entry.value = value;
 			}
 
@@ -247,15 +255,17 @@ pub fn GaugeVec(comptime V: type, comptime L: type) type {
 
 			// value is only used if this is the first time we've seen this label.
 			// if we've already seen this label, and thus have an existing entry in
-			// our map, then f() is executed.
-			fn withValue(self: *Impl, labels: L, value: V, comptime f: fn(V, *Value) void) !void {
+			// our map, then fa() or f() is executed. fa() is called when an atomic
+			// update is necessary, and f() is called when an atomic update isn't (
+			// because a mutex is being held).
+			fn withValue(self: *Impl, labels: L, value: V, comptime fa: fn(V, *Value) void, comptime f: fn(V, *Value) void) !void {
 				const allocator = self.allocator;
 
 				{
 					self.lock.lockShared();
 					defer self.lock.unlockShared();
 					if (self.values.getPtr(labels)) |existing| {
-						f(value, existing);
+						fa(value, existing);
 						return;
 					}
 				}

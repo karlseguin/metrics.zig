@@ -222,25 +222,32 @@ pub fn HistogramVec(comptime V: type, comptime L: type, comptime upper_bounds: [
 			const Value = struct {
 				sum: V,
 				count: usize,
+				mutex: std.Thread.Mutex,
 				buckets: [upper_bounds.len]V,
 				// this gets glued to our output_bucket_prefixes
 				attributes: []const u8,
 
-				fn observe(self: *Value, value: V) void {
+				fn observe(self: *Value, value: V, idx: ?usize) void {
+					self.mutex.lock();
+					defer self.mutex.unlock();
+					self.observeLocked(value, idx);
+				}
+
+				fn observeLocked(self: *Value, value: V, idx: ?usize) void {
 					self.sum += value;
 					self.count += 1;
+					if (idx) |idx_| {
+						self.buckets[idx_] += 1;
+					}
+				}
 
-					const idx = blk: {
-						for (upper_bounds, 0..) |upper, i| {
-							if (value < upper) {
-								break :blk i;
-							}
+				fn getIndex(value: V) ?usize {
+					for (upper_bounds, 0..) |upper, i| {
+						if (value < upper) {
+							return i;
 						}
-						// this is our implicit bucket to +Inf. Implicit because the count
-						// and sum, updated above, will contain this entry
-						return;
-					};
-					self.buckets[idx] += 1;
+					}
+					return null;
 				}
 			};
 
@@ -303,11 +310,23 @@ pub fn HistogramVec(comptime V: type, comptime L: type, comptime upper_bounds: [
 			pub fn observe(self: *Impl, labels: L, value: V) !void {
 				const allocator = self.allocator;
 
+				// do this outside any lock
+				const idx: ?usize = blk: {
+					for (upper_bounds, 0..) |upper, i| {
+						if (value < upper) {
+							break :blk i;
+						}
+					}
+					// this is our implicit bucket to +Inf. Implicit because the count
+					// and sum, updated above, will contain this entry
+					break :blk null;
+				};
+
 				{
 					self.lock.lockShared();
 					defer self.lock.unlockShared();
 					if (self.values.getPtr(labels)) |existing| {
-						existing.observe(value);
+						existing.observe(value, idx);
 						return;
 					}
 				}
@@ -324,6 +343,7 @@ pub fn HistogramVec(comptime V: type, comptime L: type, comptime upper_bounds: [
 				const histogram = Value{
 					.sum = 0,
 					.count = 0,
+					.mutex = .{},
 					.attributes = attributes,
 					.buckets = std.mem.zeroes([upper_bounds.len]V),
 				};
@@ -339,7 +359,9 @@ pub fn HistogramVec(comptime V: type, comptime L: type, comptime upper_bounds: [
 					gop.value_ptr.* = histogram;
 				}
 
-				gop.value_ptr.observe(value);
+				// since we've taking out a write lock out the entire histogram
+				// we can observe this value without taking an inner value lock.
+				gop.value_ptr.observeLocked(value, idx);
 			}
 
 			pub fn remove(self: *Impl, labels: L) void {
@@ -367,24 +389,45 @@ pub fn HistogramVec(comptime V: type, comptime L: type, comptime upper_bounds: [
 
 				var it = self.values.iterator();
 				while (it.next()) |kv| {
-					var sum: V = 0;
-					const value = kv.value_ptr.*;
+					var value = kv.value_ptr;
+					var bucket_counts: [upper_bounds.len]V = undefined;
+
+					// copy our sum/count/bucket_counts out of Value into local variables
+					// to minimize our lock duration
+					value.mutex.lock();
+					var buckets = &value.buckets;
+					const value_sum = value.sum;
+					const value_count = value.count;
+					for (buckets, 0..) |bucket_count, i| {
+						bucket_counts[i] = bucket_count;
+						buckets[i] = 0;
+					}
+					value.sum = 0;
+					value.count = 0;
+					value.mutex.unlock();
+
 					const attributes = value.attributes;
+					// attributes contains the opening and closing braces: {k="v"}
+					// but for the bucket values, we're appending the attribute to the
+					// pre-generated prefix, which already contains "{le="$bucket".
+					// So we strip out the leading "{" from our attribute so that we can
+					// glue is to our pre-generated prefix.
 					const append_attributes = attributes[1..];
-					for (self.output_bucket_prefixes, 0..) |prefix, i| {
-						sum += value.buckets[i];
+
+					var sum: V = 0;
+					for (self.output_bucket_prefixes, bucket_counts) |prefix, bucket_count| {
+						sum += bucket_count;
 						try writer.writeAll(prefix);
 						try writer.writeAll(append_attributes);
 						try m.write(sum, writer);
 						try writer.writeByte('\n');
 					}
 
-					const total_count = value.count;
 					{
 						// write +Inf
 						try writer.writeAll(output_bucket_inf_prefix);
 						try writer.writeAll(append_attributes);
-						try std.fmt.formatInt(total_count, 10, .lower, .{}, writer);
+						try std.fmt.formatInt(value_count, 10, .lower, .{}, writer);
 					}
 
 					{
@@ -393,7 +436,7 @@ pub fn HistogramVec(comptime V: type, comptime L: type, comptime upper_bounds: [
 						// it after our output_bucket_inf_prefix
 						try writer.writeAll(output_sum_prefix);
 						try writer.writeAll(attributes);
-						try m.write(value.sum, writer);
+						try m.write(value_sum, writer);
 					}
 
 					{
@@ -402,7 +445,7 @@ pub fn HistogramVec(comptime V: type, comptime L: type, comptime upper_bounds: [
 						// it after our output_sum_prefix
 						try writer.writeAll(output_count_prefix);
 						try writer.writeAll(attributes);
-						try std.fmt.formatInt(total_count, 10, .lower, .{}, writer);
+						try std.fmt.formatInt(value_count, 10, .lower, .{}, writer);
 						try writer.writeByte('\n');
 					}
 				}
@@ -410,7 +453,6 @@ pub fn HistogramVec(comptime V: type, comptime L: type, comptime upper_bounds: [
 		};
 	};
 }
-
 
 fn assertHistogramType(comptime T: type) void {
 	switch (@typeInfo(T)) {
@@ -479,6 +521,27 @@ test "Histogram" {
 \\hst_1_count 1000
 \\
 , arr.items);
+
+	arr.clearRetainingCapacity();
+	h.observe(2.8);
+	try h.write(arr.writer());
+	try t.expectString(\\# TYPE hst_1 histogram
+\\hst_1_bucket{le="0.005"} 0
+\\hst_1_bucket{le="0.01"} 0
+\\hst_1_bucket{le="0.025"} 0
+\\hst_1_bucket{le="0.05"} 0
+\\hst_1_bucket{le="0.1"} 0
+\\hst_1_bucket{le="0.25"} 0
+\\hst_1_bucket{le="0.5"} 0
+\\hst_1_bucket{le="1"} 0
+\\hst_1_bucket{le="2.5"} 0
+\\hst_1_bucket{le="5"} 1
+\\hst_1_bucket{le="10"} 1
+\\hst_1_bucket{le="+Inf"} 1
+\\hst_1_sum 2.8
+\\hst_1_count 1
+\\
+, arr.items);
 }
 
 test "HistogramVec: noop " {
@@ -541,6 +604,41 @@ test "HistogramVec" {
 \\hst_1_bucket{le="+Inf",status="400"} 100
 \\hst_1_sum{status="400"} 6.369539040617386
 \\hst_1_count{status="400"} 100
+\\
+, arr.items);
+
+	try h.observe(.{.status = 200}, 9);
+	arr.clearRetainingCapacity();
+	try h.write(arr.writer());
+	try t.expectString(\\# TYPE hst_1 histogram
+\\hst_1_bucket{le="0.005",status="200"} 0
+\\hst_1_bucket{le="0.01",status="200"} 0
+\\hst_1_bucket{le="0.025",status="200"} 0
+\\hst_1_bucket{le="0.05",status="200"} 0
+\\hst_1_bucket{le="0.1",status="200"} 0
+\\hst_1_bucket{le="0.25",status="200"} 0
+\\hst_1_bucket{le="0.5",status="200"} 0
+\\hst_1_bucket{le="1",status="200"} 0
+\\hst_1_bucket{le="2.5",status="200"} 0
+\\hst_1_bucket{le="5",status="200"} 0
+\\hst_1_bucket{le="10",status="200"} 1
+\\hst_1_bucket{le="+Inf",status="200"} 1
+\\hst_1_sum{status="200"} 9
+\\hst_1_count{status="200"} 1
+\\hst_1_bucket{le="0.005",status="400"} 0
+\\hst_1_bucket{le="0.01",status="400"} 0
+\\hst_1_bucket{le="0.025",status="400"} 0
+\\hst_1_bucket{le="0.05",status="400"} 0
+\\hst_1_bucket{le="0.1",status="400"} 0
+\\hst_1_bucket{le="0.25",status="400"} 0
+\\hst_1_bucket{le="0.5",status="400"} 0
+\\hst_1_bucket{le="1",status="400"} 0
+\\hst_1_bucket{le="2.5",status="400"} 0
+\\hst_1_bucket{le="5",status="400"} 0
+\\hst_1_bucket{le="10",status="400"} 0
+\\hst_1_bucket{le="+Inf",status="400"} 0
+\\hst_1_sum{status="400"} 0
+\\hst_1_count{status="400"} 0
 \\
 , arr.items);
 }

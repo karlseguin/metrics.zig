@@ -189,7 +189,7 @@ pub fn CounterVec(comptime V: type, comptime L: type) type {
 					self.lock.lockShared();
 					defer self.lock.unlockShared();
 					if (self.values.getPtr(labels)) |existing| {
-						existing.count += count;
+						_ = @atomicRmw(V, &existing.count, .Add, count, .Monotonic);
 						return;
 					}
 				}
