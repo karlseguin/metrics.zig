@@ -198,11 +198,12 @@ pub fn HistogramVec(comptime V: type, comptime L: type, comptime upper_bounds: [
 			}
 		}
 
-		pub fn deinit(self: Self) void {
+		// could get the allocator from impl.allocator, but taking it as a parameter
+		// makes the API the same between Histogram and HistogramVec
+		pub fn deinit(self: Self, allocator: Allocator) void {
 			switch (self) {
 				.noop => {},
 				.impl => |impl| {
-					const allocator = impl.allocator;
 					impl.deinit();
 					allocator.destroy(impl);
 				},
@@ -547,7 +548,7 @@ test "Histogram" {
 test "HistogramVec: noop " {
 	// these should just not crash
 	var h = HistogramVec(u32, struct{status: u16}, &.{0}){.noop = {}};
-	defer h.deinit();
+	defer h.deinit(t.allocator);
 	try h.observe(.{.status = 200}, 2);
 
 	var arr = std.ArrayList(u8).init(t.allocator);
@@ -558,7 +559,7 @@ test "HistogramVec: noop " {
 
 test "HistogramVec" {
 	var h = try HistogramVec(f64, struct{status: u16}, &.{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10}).init(t.allocator, "hst_1", .{});
-	defer h.deinit();
+	defer h.deinit(t.allocator);
 
 	var i: f64 = 0.001;
 	for (0..1000) |_| {

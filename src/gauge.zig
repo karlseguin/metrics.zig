@@ -116,11 +116,12 @@ pub fn GaugeVec(comptime V: type, comptime L: type) type {
 			return .{.impl = impl};
 		}
 
-		pub fn deinit(self: Self) void {
+		// could get the allocator from impl.allocator, but taking it as a parameter
+		// makes the API the same between Gauge and GaugeVec
+		pub fn deinit(self: Self, allocator: Allocator) void {
 			switch (self) {
 				.noop => {},
 				.impl => |impl| {
-					const allocator = impl.allocator;
 					impl.deinit();
 					allocator.destroy(impl);
 				},
@@ -409,7 +410,7 @@ test "Gauge: float write" {
 test "GaugeVec: noop incr/incrBy/set" {
 	// these should just not crash
 	var g = GaugeVec(u32, struct{id: u32}){.noop = {}};
-	defer g.deinit();
+	defer g.deinit(t.allocator);
 	try g.incr(.{.id = 3});
 	try g.incrBy(.{.id = 10}, 20);
 	try g.set(.{.id = 3}, 11);
@@ -428,7 +429,7 @@ test "GaugeVec: incr/incrBy/set + write" {
 
 	// these should just not crash
 	var g = try GaugeVec(i64, struct{id: []const u8}).init(t.allocator, "gauge_vec_1", .{.help = "h1"});
-	defer g.deinit();
+	defer g.deinit(t.allocator);
 
 	try g.incr(.{.id = "a"});
 	try g.write(arr.writer());
@@ -462,7 +463,7 @@ test "GaugeVec: float incr/incrBy/set + write" {
 
 	// these should just not crash
 	var g = try GaugeVec(f64, struct{id: []const u8}).init(t.allocator, "gauge_vec_xx_2", .{.help = "h1"});
-	defer g.deinit();
+	defer g.deinit(t.allocator);
 
 	try g.incr(.{.id = "a"});
 	try g.write(arr.writer());

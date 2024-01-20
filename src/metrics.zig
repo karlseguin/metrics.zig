@@ -44,7 +44,10 @@ pub fn initializeNoop(comptime T: type) T {
 pub fn write(metrics: anytype, writer: anytype) !void {
 	const fields = @typeInfo(@TypeOf(metrics)).Struct.fields;
 	inline for (fields) |f| {
-		try @field(metrics, f.name).write(writer);
+		switch (@typeInfo(f.type)) {
+			.Union => try @field(metrics, f.name).write(writer),
+			else => {}
+		}
 	}
 }
 
@@ -53,15 +56,48 @@ test {
 }
 
 const t = @import("t.zig");
-test "initializeNoop" {
+test "initializeNoop + write" {
 	const x = initializeNoop(struct{
 		status: u16 = 33,
 		hits: CounterVec(u32, struct{status: u16}),
 		active: Gauge(u64),
 		latency: Histogram(u32, &.{0, 2}),
 	});
-	try t.expectEqual(33, x.status);
-	try t.expectEqual(.noop, std.meta.activeTag(x.hits));
-	try t.expectEqual(.noop, std.meta.activeTag(x.active));
-	try t.expectEqual(.noop, std.meta.activeTag(x.latency));
+
+
+	var arr = std.ArrayList(u8).init(t.allocator);
+	defer arr.deinit();
+	try write(x, arr.writer());
+	try t.expectEqual(0, arr.items.len);
+}
+
+
+test " write" {
+
+	const M = struct{
+		hits: Hits,
+		active: Gauge(u64),
+
+		const Hits = CounterVec(u32, struct{status: u16});
+	};
+
+	var m = M{
+		.active = try Gauge(u64).init(t.allocator, "active", .{}),
+		.hits = try M.Hits.init(t.allocator, "hits", .{}),
+	};
+	defer m.hits.deinit(t.allocator);
+	defer m.active.deinit(t.allocator);
+
+	m.active.set(919);
+	try m.hits.incr(.{.status = 199});
+
+	var arr = std.ArrayList(u8).init(t.allocator);
+	defer arr.deinit();
+	try write(m, arr.writer());
+	try t.expectString(\\# TYPE hits counter
+\\hits{status="199"} 1
+\\# TYPE active gauge
+\\active 919
+\\
+, arr.items);
 }

@@ -8,7 +8,6 @@ const Allocator = std.mem.Allocator;
 // output preamble, the "# HELP $HELP\n# TYPE $TYPE\n$name " that comes before
 // all metric values
 pub const Metric = struct {
-
 	preamble: []const u8,
 
 	const Type = enum {

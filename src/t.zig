@@ -2,9 +2,7 @@ const std = @import("std");
 
 pub const allocator = std.testing.allocator;
 
-pub fn expectEqual(expected: anytype, actual: anytype) !void {
-	try std.testing.expectEqual(@as(@TypeOf(actual), expected), actual);
-}
+pub const expectEqual = std.testing.expectEqual;
 pub const expectFmt = std.testing.expectFmt;
 pub const expectError = std.testing.expectError;
 pub const expectSlice = std.testing.expectEqualSlices;
