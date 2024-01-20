@@ -15,7 +15,7 @@ const m = @import("metrics");
 
 // defaults to noop metrics, making this safe to use
 // whether or not initializeMetrics is called
-pub var metrics = m.initializeNoop(Metrics);
+var metrics = m.initializeNoop(Metrics);
 
 const Metrics = struct {
     // counter can be a unsigned integer or floats
@@ -27,6 +27,16 @@ const Metrics = struct {
     // histogram can be an integer or flat, it requires the buckets to use
     latency: m.Histogram(f64, &.{0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10}),
 };
+
+// meant to be called within the application
+pub fn hit() void {
+    metrics.hits.incr();
+}
+
+// meant to be called within the application
+pub fn connected(value: u16) void {
+    metrics.connected.set(value);
+}
 
 // meant to be called once on application startup
 pub fn initializeMetrics(allocator: Allocator, comptime opts: m.RegistryOpts) !void {
@@ -66,7 +76,7 @@ The `RegistryOpts` parameter should be supplied by the application and passed to
 Every metric type supports a vectored variant. This allows labels to be attached to metrics. As you'll see in the metric API section, most vectored metrics methods can fail (as they may need to do allocation for new label values).
 
 ```zig
-pub var metrics = m.initializeNoop(Metrics);
+var metrics = m.initializeNoop(Metrics);
 
 const Metrics = struct {
     hits: m.CounterVec(u32, struct{status: u16, name: []const u8}),
@@ -84,6 +94,8 @@ The labels are strongly types. Valid label types are: `ErrorSet`, `Enum`, `Type`
 The `CounterVec(u32, ...)` has to be typed twice: once in the definition of `Metrics` and once in `initializeMetrics`. This can be improved slightly.
 
 ```zig
+var metrics = m.initializeNoop(Metrics);
+
 const Metrics = struct {
     hits: Hits,
 
@@ -94,6 +106,14 @@ pub fn initializeMetrics(allocator: Allocator, opts: m.RegistryOpts) !void {
     metrics = .{
         .hits = try Metrics.Hits.init(allocator, "hits", .{}, opts),
     };
+}
+
+// Labels are compile-time checked. Using "anytype" here
+// is just lazy so we don't have to declare the label structure
+// Would be called as:
+//   @import("metrics.zig").hit(.{.status = 200, .path = "/about.txt"});
+pub fn hit(labels: anytype) !void {
+    return metrics.hits.incr(labels);
 }
 ```
 
@@ -119,6 +139,8 @@ pub fn initializeMetrics(allocator: Allocator, opts: m.RegistryOpts) !void {
 The `HistogramVec` is even more verbose, requiring the label struct and bucket list:
 
 ```zig
+var metrics = m.initializeNoop(Metrics);
+
 const Metrics = struct {
     latency: Latency,
 
@@ -133,6 +155,14 @@ pub fn initializeMetrics(allocator: Allocator, opts: m.RegistryOpts) !void {
     metrics = .{
         .latency = try Metrics.Latency.init(allocator, "hits", .{}, opts),
     };
+}
+
+// Labels are compile-time checked. Using "anytype" here
+// is just lazy so we don't have to declare the label structure
+// Would be called as:
+//   @import("metrics.zig").recordLatency(.{.path = "robots.txt"}, 2);
+pub fn recordLatency(labels: anytype, value: u32) !void {
+    return metrics.latency.observe(labels, value);
 }
 ```
 
