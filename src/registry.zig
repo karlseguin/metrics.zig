@@ -17,3 +17,11 @@ pub const Opts = struct {
 		return false;
 	}
 };
+
+const t = @import("t.zig");
+test "Registry.Opts: shouldExclude" {
+	try t.expectEqual(false, (Opts{}).shouldExclude("abc"));
+	try t.expectEqual(false, (Opts{.exclude = &.{"ABC", "other"}}).shouldExclude("abc"));
+	try t.expectEqual(true, (Opts{.exclude = &.{"abc", "other"}}).shouldExclude("abc"));
+	try t.expectEqual(true, (Opts{.exclude = &.{"a", "otaher", "abc"}}).shouldExclude("abc"));
+}

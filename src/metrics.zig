@@ -66,7 +66,6 @@ test "initializeNoop + write" {
 		latency: Histogram(u32, &.{0, 2}),
 	});
 
-
 	var arr = std.ArrayList(u8).init(t.allocator);
 	defer arr.deinit();
 	try write(x, arr.writer());
