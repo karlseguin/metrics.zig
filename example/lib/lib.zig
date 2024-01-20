@@ -1,7 +1,6 @@
 // This folder simulates a 3rd party library that the application, main.zig
 // is using.
 
-
 const metrics = @import("metrics.zig");
 
 // Expose initializeMetrics to give control to the application over whether or

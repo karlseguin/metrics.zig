@@ -21,7 +21,6 @@ const Metrics = struct {
 	);
 };
 
-
 pub fn hit(labels: anytype) !void {
 	return metrics.hits.incr(labels);
 }
