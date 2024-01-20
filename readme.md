@@ -3,6 +3,8 @@ This library is meant to be easy for both library developers and application dev
 
 It supports, counters, gauges and histograms and the labeled-variant of each.
 
+Please see the example project. It demonstrates how a <a href="https://github.com/karlseguin/metrics.zig/blob/master/example/lib/metrics.zig">library developer can setup their metrics</a>, and how an <a href="https://github.com/karlseguin/metrics.zig/blob/master/example/main.zig">application developer can initialize and output those metrics.</a>
+
 ## Metric Setup
 Setup is a bit tedious, and I welcome suggestions for improvement. 
 
