@@ -5,6 +5,8 @@ const m = @import("metric.zig");
 const Metric = m.Metric;
 const MetricVec = m.MetricVec;
 
+const RegistryOpts = @import("registry.zig").Opts;
+
 const Opts = struct {
 	help: ?[]const u8 = null,
 };
@@ -17,11 +19,16 @@ pub fn Gauge(comptime V: type) type {
 
 		const Self = @This();
 
-		pub fn init(allocator: Allocator, comptime name: []const u8, opts: Opts) !Self {
-			const impl = try allocator.create(Impl);
-			errdefer allocator.destroy(impl);
-			impl.* = try Impl.init(allocator, name, opts);
-			return .{.impl = impl};
+		pub fn init(allocator: Allocator, comptime name: []const u8, opts: Opts, comptime ropts: RegistryOpts) !Self {
+			switch (ropts.shouldExclude(name)) {
+				true => return .{.noop = {}},
+				false => {
+					const impl = try allocator.create(Impl);
+					errdefer allocator.destroy(impl);
+					impl.* = try Impl.init(allocator, ropts.prefix ++ name, opts);
+					return .{.impl = impl};
+				},
+			}
 		}
 
 		pub fn incr(self: Self) void {
@@ -108,12 +115,16 @@ pub fn GaugeVec(comptime V: type, comptime L: type) type {
 
 		const Self = @This();
 
-		pub fn init(allocator: Allocator, comptime name: []const u8, opts: Opts) !Self {
-			const impl = try allocator.create(Impl);
-			errdefer allocator.destroy(impl);
-
-			impl.* = try Impl.init(allocator, name, opts);
-			return .{.impl = impl};
+		pub fn init(allocator: Allocator, comptime name: []const u8, opts: Opts, comptime ropts: RegistryOpts) !Self {
+			switch (ropts.shouldExclude(name)) {
+				true => return .{.noop = {}},
+				false => {
+					const impl = try allocator.create(Impl);
+					errdefer allocator.destroy(impl);
+					impl.* = try Impl.init(allocator, ropts.prefix ++ name, opts);
+					return .{.impl = impl};
+				},
+			}
 		}
 
 		// could get the allocator from impl.allocator, but taking it as a parameter
@@ -324,7 +335,7 @@ test "Gauge: noop incr/incrBy/set" {
 }
 
 test "Gauge: incr/incrBy/set" {
-	var g = try Gauge(i32).init(t.allocator, "t1", .{});
+	var g = try Gauge(i32).init(t.allocator, "t1", .{}, .{});
 	defer g.deinit(t.allocator);
 
 	g.incr();
@@ -344,7 +355,7 @@ test "Gauge: write" {
 	var arr = std.ArrayList(u8).init(t.allocator);
 	defer arr.deinit();
 
-	var g = try Gauge(i32).init(t.allocator, "metric_grp_1_x", .{});
+	var g = try Gauge(i32).init(t.allocator, "metric_grp_1_x", .{}, .{});
 	defer g.deinit(t.allocator);
 
 	{
@@ -369,7 +380,7 @@ test "Gauge: write" {
 }
 
 test "Gauge: float incr/incrBy/set" {
-	var c = try Gauge(f32).init(t.allocator, "t1", .{});
+	var c = try Gauge(f32).init(t.allocator, "t1", .{}, .{});
 	defer c.deinit(t.allocator);
 	c.incr();
 	try t.expectEqual(1, c.impl.value);
@@ -383,7 +394,7 @@ test "Gauge: float write" {
 	var arr = std.ArrayList(u8).init(t.allocator);
 	defer arr.deinit();
 
-	var c = try Gauge(f64).init(t.allocator, "metric_g_2_x", .{});
+	var c = try Gauge(f64).init(t.allocator, "metric_g_2_x", .{}, .{});
 	defer c.deinit(t.allocator);
 
 	{
@@ -428,7 +439,7 @@ test "GaugeVec: incr/incrBy/set + write" {
 	const preamble = "# HELP gauge_vec_1 h1\n# TYPE gauge_vec_1 gauge\n";
 
 	// these should just not crash
-	var g = try GaugeVec(i64, struct{id: []const u8}).init(t.allocator, "gauge_vec_1", .{.help = "h1"});
+	var g = try GaugeVec(i64, struct{id: []const u8}).init(t.allocator, "gauge_vec_1", .{.help = "h1"}, .{});
 	defer g.deinit(t.allocator);
 
 	try g.incr(.{.id = "a"});
@@ -462,7 +473,7 @@ test "GaugeVec: float incr/incrBy/set + write" {
 	const preamble = "# HELP gauge_vec_xx_2 h1\n# TYPE gauge_vec_xx_2 gauge\n";
 
 	// these should just not crash
-	var g = try GaugeVec(f64, struct{id: []const u8}).init(t.allocator, "gauge_vec_xx_2", .{.help = "h1"});
+	var g = try GaugeVec(f64, struct{id: []const u8}).init(t.allocator, "gauge_vec_xx_2", .{.help = "h1"}, .{});
 	defer g.deinit(t.allocator);
 
 	try g.incr(.{.id = "a"});

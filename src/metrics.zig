@@ -12,6 +12,8 @@ const histogram = @import("histogram.zig");
 pub const Histogram = histogram.Histogram;
 pub const HistogramVec = histogram.HistogramVec;
 
+pub const RegistryOpts = @import("registry.zig").Opts;
+
 // This allows a library developer to safely use a library-wide metrics
 // instance by defaulting all metrics to "noop" variants. Library developers
 // can then expose a function to the main application, say:
@@ -71,9 +73,7 @@ test "initializeNoop + write" {
 	try t.expectEqual(0, arr.items.len);
 }
 
-
 test " write" {
-
 	const M = struct{
 		hits: Hits,
 		active: Gauge(u64),
@@ -82,8 +82,8 @@ test " write" {
 	};
 
 	var m = M{
-		.active = try Gauge(u64).init(t.allocator, "active", .{}),
-		.hits = try M.Hits.init(t.allocator, "hits", .{}),
+		.active = try Gauge(u64).init(t.allocator, "active", .{}, .{}),
+		.hits = try M.Hits.init(t.allocator, "hits", .{}, .{}),
 	};
 	defer m.hits.deinit(t.allocator);
 	defer m.active.deinit(t.allocator);

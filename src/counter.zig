@@ -5,6 +5,8 @@ const m = @import("metric.zig");
 const Metric = m.Metric;
 const MetricVec = m.MetricVec;
 
+const RegistryOpts = @import("registry.zig").Opts;
+
 const Opts = struct {
 	help: ?[]const u8 = null,
 };
@@ -17,11 +19,16 @@ pub fn Counter(comptime V: type) type {
 
 		const Self = @This();
 
-		pub fn init(allocator: Allocator, comptime name: []const u8, opts: Opts) !Self {
-			const impl = try allocator.create(Impl);
-			errdefer allocator.destroy(impl);
-			impl.* = try Impl.init(allocator, name, opts);
-			return .{.impl = impl};
+		pub fn init(allocator: Allocator, comptime name: []const u8, opts: Opts, comptime ropts: RegistryOpts) !Self {
+			switch (ropts.shouldExclude(name)) {
+				true => return .{.noop = {}},
+				false => {
+					const impl = try allocator.create(Impl);
+					errdefer allocator.destroy(impl);
+					impl.* = try Impl.init(allocator, ropts.prefix ++ name, opts);
+					return .{.impl = impl};
+				},
+			}
 		}
 
 		pub fn incr(self: Self) void {
@@ -99,12 +106,16 @@ pub fn CounterVec(comptime V: type, comptime L: type) type {
 
 		const Self = @This();
 
-		pub fn init(allocator: Allocator, comptime name: []const u8, opts: Opts) !Self {
-			const impl = try allocator.create(Impl);
-			errdefer allocator.destroy(impl);
-
-			impl.* = try Impl.init(allocator, name, opts);
-			return .{.impl = impl};
+		pub fn init(allocator: Allocator, comptime name: []const u8, opts: Opts, comptime ropts: RegistryOpts) !Self {
+			switch (ropts.shouldExclude(name)) {
+				true => return .{.noop = {}},
+				false => {
+					const impl = try allocator.create(Impl);
+					errdefer allocator.destroy(impl);
+					impl.* = try Impl.init(allocator, ropts.prefix ++ name, opts);
+					return .{.impl = impl};
+				},
+			}
 		}
 
 		// could get the allocator from impl.allocator, but taking it as a parameter
@@ -282,7 +293,7 @@ test "Counter: noop incr/incrBy" {
 }
 
 test "Counter: incr/incrBy" {
-	var c = try Counter(u32).init(t.allocator, "t1", .{});
+	var c = try Counter(u32).init(t.allocator, "t1", .{}, .{});
 	defer c.deinit(t.allocator);
 	c.incr();
 	try t.expectEqual(1, c.impl.count);
@@ -294,7 +305,7 @@ test "Counter: write" {
 	var arr = std.ArrayList(u8).init(t.allocator);
 	defer arr.deinit();
 
-	var c = try Counter(u32).init(t.allocator, "metric_cnt_1_x", .{});
+	var c = try Counter(u32).init(t.allocator, "metric_cnt_1_x", .{}, .{.exclude = &.{"t_ex"}});
 	defer c.deinit(t.allocator);
 
 	{
@@ -311,8 +322,30 @@ test "Counter: write" {
 	}
 }
 
+test "Counter: exclude" {
+	var c = try Counter(u32).init(t.allocator, "t_ex", .{}, .{.exclude = &.{"t_ex"}});
+	defer c.deinit(t.allocator);
+	c.incr();
+
+	var arr = std.ArrayList(u8).init(t.allocator);
+	defer arr.deinit();
+	try c.write(arr.writer());
+	try t.expectEqual(0, arr.items.len);
+}
+
+test "Counter: prefix" {
+	var c = try Counter(u32).init(t.allocator, "t1_p", .{}, .{.prefix = "hello_"});
+	defer c.deinit(t.allocator);
+	c.incr();
+
+	var arr = std.ArrayList(u8).init(t.allocator);
+	defer arr.deinit();
+	try c.write(arr.writer());
+	try t.expectString("# TYPE hello_t1_p counter\nhello_t1_p 1\n", arr.items);
+}
+
 test "Counter: float incr/incrBy" {
-	var c = try Counter(f32).init(t.allocator, "t1", .{});
+	var c = try Counter(f32).init(t.allocator, "t1", .{}, .{});
 	defer c.deinit(t.allocator);
 	c.incr();
 	try t.expectEqual(1, c.impl.count);
@@ -324,7 +357,7 @@ test "Counter: float write" {
 	var arr = std.ArrayList(u8).init(t.allocator);
 	defer arr.deinit();
 
-	var c = try Counter(f64).init(t.allocator, "metric_cnt_2_x", .{});
+	var c = try Counter(f64).init(t.allocator, "metric_cnt_2_x", .{}, .{});
 	defer c.deinit(t.allocator);
 
 	{
@@ -361,7 +394,7 @@ test "CounterVec: incr/incrBy + write" {
 	const preamble = "# HELP counter_vec_1 h1\n# TYPE counter_vec_1 counter\n";
 
 	// these should just not crash
-	var c = try CounterVec(u64, struct{id: []const u8}).init(t.allocator, "counter_vec_1", .{.help = "h1"});
+	var c = try CounterVec(u64, struct{id: []const u8}).init(t.allocator, "counter_vec_1", .{.help = "h1"}, .{});
 	defer c.deinit(t.allocator);
 
 	try c.incr(.{.id = "a"});
@@ -393,7 +426,7 @@ test "CounterVec: float incr/incrBy + write" {
 	const preamble = "# HELP counter_vec_xx_2 h1\n# TYPE counter_vec_xx_2 counter\n";
 
 	// these should just not crash
-	var c = try CounterVec(f32, struct{id: []const u8}).init(t.allocator, "counter_vec_xx_2", .{.help = "h1"});
+	var c = try CounterVec(f32, struct{id: []const u8}).init(t.allocator, "counter_vec_xx_2", .{.help = "h1"}, .{});
 	defer c.deinit(t.allocator);
 
 	try c.incr(.{.id = "a"});

@@ -5,6 +5,8 @@ const m = @import("metric.zig");
 const Metric = m.Metric;
 const MetricVec = m.MetricVec;
 
+const RegistryOpts = @import("registry.zig").Opts;
+
 const Opts = struct {
 	help: ?[]const u8 = null,
 };
@@ -19,11 +21,16 @@ pub fn Histogram(comptime V: type, comptime upper_bounds: []const V) type {
 
 		const Self = @This();
 
-		pub fn init(allocator: Allocator, comptime name: []const u8, opts: Opts) !Self {
-			const impl = try allocator.create(Impl);
-			errdefer allocator.destroy(impl);
-			impl.* = try Impl.init(allocator, name, opts);
-			return .{.impl = impl};
+		pub fn init(allocator: Allocator, comptime name: []const u8, opts: Opts, comptime ropts: RegistryOpts) !Self {
+			switch (ropts.shouldExclude(name)) {
+				true => return .{.noop = {}},
+				false => {
+					const impl = try allocator.create(Impl);
+					errdefer allocator.destroy(impl);
+					impl.* = try Impl.init(allocator, ropts.prefix ++ name, opts);
+					return .{.impl = impl};
+				},
+			}
 		}
 
 		pub fn observe(self: Self, value: V) void {
@@ -177,11 +184,16 @@ pub fn HistogramVec(comptime V: type, comptime L: type, comptime upper_bounds: [
 
 		const Self = @This();
 
-		pub fn init(allocator: Allocator, comptime name: []const u8, opts: Opts) !Self {
-			const impl = try allocator.create(Impl);
-			errdefer allocator.destroy(impl);
-			impl.* = try Impl.init(allocator, name, opts);
-			return .{.impl = impl};
+		pub fn init(allocator: Allocator, comptime name: []const u8, opts: Opts, comptime ropts: RegistryOpts) !Self {
+			switch (ropts.shouldExclude(name)) {
+				true => return .{.noop = {}},
+				false => {
+					const impl = try allocator.create(Impl);
+					errdefer allocator.destroy(impl);
+					impl.* = try Impl.init(allocator, ropts.prefix ++ name, opts);
+					return .{.impl = impl};
+				},
+			}
 		}
 
 		pub fn observe(self: Self, labels: L, value: V) !void {
@@ -493,7 +505,7 @@ test "Histogram: noop " {
 }
 
 test "Histogram" {
-	var h = try Histogram(f64, &.{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10}).init(t.allocator, "hst_1", .{});
+	var h = try Histogram(f64, &.{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10}).init(t.allocator, "hst_1", .{}, .{});
 	defer h.deinit(t.allocator);
 
 	var i: f64 = 0.001;
@@ -558,7 +570,7 @@ test "HistogramVec: noop " {
 }
 
 test "HistogramVec" {
-	var h = try HistogramVec(f64, struct{status: u16}, &.{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10}).init(t.allocator, "hst_1", .{});
+	var h = try HistogramVec(f64, struct{status: u16}, &.{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10}).init(t.allocator, "hst_1", .{}, .{});
 	defer h.deinit(t.allocator);
 
 	var i: f64 = 0.001;
