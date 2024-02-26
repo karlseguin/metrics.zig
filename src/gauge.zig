@@ -15,54 +15,42 @@ pub fn Gauge(comptime V: type) type {
 	assertGaugeType(V);
 	return union(enum) {
 		noop: void,
-		impl: *Impl,
+		impl: Impl,
 
 		const Self = @This();
 
-		pub fn init(allocator: Allocator, comptime name: []const u8, comptime opts: Opts, comptime ropts: RegistryOpts) !Self {
+		pub fn init(comptime name: []const u8, comptime opts: Opts, comptime ropts: RegistryOpts) !Self {
 			switch (ropts.shouldExclude(name)) {
 				true => return .{.noop = {}},
-				false => {
-					const impl = try allocator.create(Impl);
-					errdefer allocator.destroy(impl);
-					impl.* = try Impl.init(ropts.prefix ++ name, opts);
-					return .{.impl = impl};
-				},
+				false => return .{.impl = try Impl.init(ropts.prefix ++ name, opts)},
 			}
 		}
 
-		pub fn incr(self: Self) void {
-			switch (self) {
+		pub fn incr(self: *Self) void {
+			switch (self.*) {
 				.noop => {},
-				.impl => |impl| impl.incr(),
+				.impl => |*impl| impl.incr(),
 			}
 		}
 
-		pub fn set(self: Self, value: V) void {
-			switch (self) {
+		pub fn set(self: *Self, value: V) void {
+			switch (self.*) {
 				.noop => {},
-				.impl => |impl| impl.set(value),
+				.impl => |*impl| impl.set(value),
 			}
 		}
 
-		pub fn incrBy(self: Self, value: V) void {
-			switch (self) {
+		pub fn incrBy(self: *Self, value: V) void {
+			switch (self.*) {
 				.noop => {},
-				.impl => |impl| impl.incrBy(value),
+				.impl => |*impl| impl.incrBy(value),
 			}
 		}
 
-		pub fn write(self: Self, writer: anytype) !void {
-			switch (self) {
+		pub fn write(self: *Self, writer: anytype) !void {
+			switch (self.*) {
 				.noop => {},
-				.impl => |impl| return impl.write(writer),
-			}
-		}
-
-		pub fn deinit(self: Self, allocator: Allocator) void {
-			switch (self) {
-				.noop => {},
-				.impl => |impl| allocator.destroy(impl),
+				.impl => |*impl| return impl.write(writer),
 			}
 		}
 
@@ -103,66 +91,56 @@ pub fn GaugeVec(comptime V: type, comptime L: type) type {
 	assertGaugeType(V);
 	return union(enum) {
 		noop: void,
-		impl: *Impl,
+		impl: Impl,
 
 		const Self = @This();
 
 		pub fn init(allocator: Allocator, comptime name: []const u8, comptime opts: Opts, comptime ropts: RegistryOpts) !Self {
 			switch (ropts.shouldExclude(name)) {
 				true => return .{.noop = {}},
-				false => {
-					const impl = try allocator.create(Impl);
-					errdefer allocator.destroy(impl);
-					impl.* = try Impl.init(allocator, ropts.prefix ++ name, opts);
-					return .{.impl = impl};
-				},
+				false => return .{.impl = try Impl.init(allocator, ropts.prefix ++ name, opts)},
 			}
 		}
 
-		// could get the allocator from impl.allocator, but taking it as a parameter
-		// makes the API the same between Gauge and GaugeVec
-		pub fn deinit(self: Self, allocator: Allocator) void {
-			switch (self) {
+		pub fn deinit(self: *Self) void {
+			switch (self.*) {
 				.noop => {},
-				.impl => |impl| {
-					impl.deinit();
-					allocator.destroy(impl);
-				},
+				.impl => |*impl| impl.deinit(),
 			}
 		}
 
-		pub fn incr(self: Self, labels: L) !void {
-			switch (self) {
+		pub fn incr(self: *Self, labels: L) !void {
+			switch (self.*) {
 				.noop => {},
-				.impl => |impl| return impl.incr(labels),
+				.impl => |*impl| return impl.incr(labels),
 			}
 		}
 
-		pub fn incrBy(self: Self, labels: L, value: V) !void {
-			switch (self) {
+		pub fn incrBy(self: *Self, labels: L, value: V) !void {
+			switch (self.*) {
 				.noop => {},
-				.impl => |impl| return impl.incrBy(labels, value),
+				.impl => |*impl| return impl.incrBy(labels, value),
 			}
 		}
 
-		pub fn set(self: Self, labels: L, value: V) !void {
-			switch (self) {
+		pub fn set(self: *Self, labels: L, value: V) !void {
+			switch (self.*) {
 				.noop => {},
-				.impl => |impl| return impl.set(labels, value),
+				.impl => |*impl| return impl.set(labels, value),
 			}
 		}
 
-		pub fn remove(self: Self, labels: L) void {
-			switch (self) {
+		pub fn remove(self: *Self, labels: L) void {
+			switch (self.*) {
 				.noop => {},
-				.impl => |impl| impl.remove(labels),
+				.impl => |*impl| impl.remove(labels),
 			}
 		}
 
-		pub fn write(self: Self, writer: anytype) !void {
-			switch (self) {
+		pub fn write(self: *Self, writer: anytype) !void {
+			switch (self.*) {
 				.noop => {},
-				.impl => |impl| return impl.write(writer),
+				.impl => |*impl| return impl.write(writer),
 			}
 		}
 
@@ -316,7 +294,6 @@ const t = @import("t.zig");
 test "Gauge: noop incr/incrBy/set" {
 	// these should just not crash
 	var c = Gauge(u32){.noop = {}};
-	defer c.deinit(t.allocator);
 	c.incr();
 	c.incrBy(10);
 	c.set(100);
@@ -328,8 +305,7 @@ test "Gauge: noop incr/incrBy/set" {
 }
 
 test "Gauge: incr/incrBy/set" {
-	var g = try Gauge(i32).init(t.allocator, "t1", .{}, .{});
-	defer g.deinit(t.allocator);
+	var g = try Gauge(i32).init("t1", .{}, .{});
 
 	g.incr();
 	try t.expectEqual(1, g.impl.value);
@@ -348,8 +324,7 @@ test "Gauge: write" {
 	var arr = std.ArrayList(u8).init(t.allocator);
 	defer arr.deinit();
 
-	var g = try Gauge(i32).init(t.allocator, "metric_grp_1_x", .{}, .{});
-	defer g.deinit(t.allocator);
+	var g = try Gauge(i32).init("metric_grp_1_x", .{}, .{});
 
 	{
 		g.incr();
@@ -373,8 +348,7 @@ test "Gauge: write" {
 }
 
 test "Gauge: float incr/incrBy/set" {
-	var c = try Gauge(f32).init(t.allocator, "t1", .{}, .{});
-	defer c.deinit(t.allocator);
+	var c = try Gauge(f32).init("t1", .{}, .{});
 	c.incr();
 	try t.expectEqual(1, c.impl.value);
 	c.incrBy(-3.9);
@@ -387,8 +361,7 @@ test "Gauge: float write" {
 	var arr = std.ArrayList(u8).init(t.allocator);
 	defer arr.deinit();
 
-	var c = try Gauge(f64).init(t.allocator, "metric_g_2_x", .{}, .{});
-	defer c.deinit(t.allocator);
+	var c = try Gauge(f64).init("metric_g_2_x", .{}, .{});
 
 	{
 		c.incr();
@@ -414,7 +387,7 @@ test "Gauge: float write" {
 test "GaugeVec: noop incr/incrBy/set" {
 	// these should just not crash
 	var g = GaugeVec(u32, struct{id: u32}){.noop = {}};
-	defer g.deinit(t.allocator);
+	defer g.deinit();
 	try g.incr(.{.id = 3});
 	try g.incrBy(.{.id = 10}, 20);
 	try g.set(.{.id = 3}, 11);
@@ -433,7 +406,7 @@ test "GaugeVec: incr/incrBy/set + write" {
 
 	// these should just not crash
 	var g = try GaugeVec(i64, struct{id: []const u8}).init(t.allocator, "gauge_vec_1", .{.help = "h1"}, .{});
-	defer g.deinit(t.allocator);
+	defer g.deinit();
 
 	try g.incr(.{.id = "a"});
 	try g.write(arr.writer());
@@ -467,7 +440,7 @@ test "GaugeVec: float incr/incrBy/set + write" {
 
 	// these should just not crash
 	var g = try GaugeVec(f64, struct{id: []const u8}).init(t.allocator, "gauge_vec_xx_2", .{.help = "h1"}, .{});
-	defer g.deinit(t.allocator);
+	defer g.deinit();
 
 	try g.incr(.{.id = "a"});
 	try g.write(arr.writer());

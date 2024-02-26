@@ -17,49 +17,42 @@ pub fn Histogram(comptime V: type, comptime upper_bounds: []const V) type {
 
 	return union(enum) {
 		noop: void,
-		impl: *Impl,
+		impl: Impl,
 
 		const Self = @This();
 
 		pub fn init(allocator: Allocator, comptime name: []const u8, comptime opts: Opts, comptime ropts: RegistryOpts) !Self {
 			switch (ropts.shouldExclude(name)) {
 				true => return .{.noop = {}},
-				false => {
-					const impl = try allocator.create(Impl);
-					errdefer allocator.destroy(impl);
-					impl.* = try Impl.init(allocator, ropts.prefix ++ name, opts);
-					return .{.impl = impl};
-				},
+				false => return .{.impl = try Impl.init(allocator, ropts.prefix ++ name, opts)},
 			}
 		}
 
-		pub fn observe(self: Self, value: V) void {
-			switch (self) {
+		pub fn observe(self: *Self, value: V) void {
+			switch (self.*) {
 				.noop => {},
-				.impl => |impl| impl.observe(value),
+				.impl => |*impl| impl.observe(value),
 			}
 		}
 
-		pub fn write(self: Self, writer: anytype) !void {
-			switch (self) {
+		pub fn write(self: *Self, writer: anytype) !void {
+			switch (self.*) {
 				.noop => {},
-				.impl => |impl| return impl.write(writer),
+				.impl => |*impl| return impl.write(writer),
 			}
 		}
 
-		pub fn deinit(self: Self, allocator: Allocator) void {
-			switch (self) {
+		pub fn deinit(self: *Self) void {
+			switch (self.*) {
 				.noop => {},
-				.impl => |impl| {
-					impl.deinit(allocator);
-					allocator.destroy(impl);
-				},
+				.impl => |*impl| impl.deinit(),
 			}
 		}
 
 		const Impl = struct {
 			sum: V,
 			count: usize,
+			allocator: Allocator,
 			preamble: []const u8,
 			buckets: [upper_bounds.len]V,
 			output_sum_prefix: []const u8,
@@ -93,6 +86,7 @@ pub fn Histogram(comptime V: type, comptime upper_bounds: []const V) type {
 				return .{
 					.sum = 0,
 					.count = 0,
+					.allocator = allocator,
 					.preamble = comptime m.preamble(name, .histogram, false, opts.help),
 					.output_sum_prefix = output_sum_prefix,
 					.output_count_prefix = output_count_prefix,
@@ -102,7 +96,8 @@ pub fn Histogram(comptime V: type, comptime upper_bounds: []const V) type {
 				};
 			}
 
-			fn deinit(self: Impl, allocator: Allocator) void {
+			fn deinit(self: Impl) void {
+				const allocator = self.allocator;
 				allocator.free(self.output_sum_prefix);
 				allocator.free(self.output_count_prefix);
 				allocator.free(self.output_bucket_inf_prefix);
@@ -174,45 +169,37 @@ pub fn HistogramVec(comptime V: type, comptime L: type, comptime upper_bounds: [
 
 	return union(enum) {
 		noop: void,
-		impl: *Impl,
+		impl: Impl,
 
 		const Self = @This();
 
 		pub fn init(allocator: Allocator, comptime name: []const u8, comptime opts: Opts, comptime ropts: RegistryOpts) !Self {
 			switch (ropts.shouldExclude(name)) {
 				true => return .{.noop = {}},
-				false => {
-					const impl = try allocator.create(Impl);
-					errdefer allocator.destroy(impl);
-					impl.* = try Impl.init(allocator, ropts.prefix ++ name, opts);
-					return .{.impl = impl};
-				},
+				false => return .{.impl = try Impl.init(allocator, ropts.prefix ++ name, opts)},
 			}
 		}
 
-		pub fn observe(self: Self, labels: L, value: V) !void {
-			switch (self) {
+		pub fn observe(self: *Self, labels: L, value: V) !void {
+			switch (self.*) {
 				.noop => {},
-				.impl => |impl| return impl.observe(labels, value),
+				.impl => |*impl| return impl.observe(labels, value),
 			}
 		}
 
-		pub fn write(self: Self, writer: anytype) !void {
-			switch (self) {
+		pub fn write(self: *Self, writer: anytype) !void {
+			switch (self.*) {
 				.noop => {},
-				.impl => |impl| return impl.write(writer),
+				.impl => |*impl| return impl.write(writer),
 			}
 		}
 
 		// could get the allocator from impl.allocator, but taking it as a parameter
 		// makes the API the same between Histogram and HistogramVec
-		pub fn deinit(self: Self, allocator: Allocator) void {
-			switch (self) {
+		pub fn deinit(self: *Self) void {
+			switch (self.*) {
 				.noop => {},
-				.impl => |impl| {
-					impl.deinit();
-					allocator.destroy(impl);
-				},
+				.impl => |*impl| impl.deinit(),
 			}
 		}
 
@@ -488,7 +475,7 @@ const t = @import("t.zig");
 test "Histogram: noop " {
 	// these should just not crash
 	var h = Histogram(u32, &.{0}){.noop = {}};
-	defer h.deinit(t.allocator);
+	defer h.deinit();
 	h.observe(2);
 
 	var arr = std.ArrayList(u8).init(t.allocator);
@@ -499,7 +486,7 @@ test "Histogram: noop " {
 
 test "Histogram" {
 	var h = try Histogram(f64, &.{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10}).init(t.allocator, "hst_1", .{}, .{});
-	defer h.deinit(t.allocator);
+	defer h.deinit();
 
 	var i: f64 = 0.001;
 	for (0..1000) |_| {
@@ -553,7 +540,7 @@ test "Histogram" {
 test "HistogramVec: noop " {
 	// these should just not crash
 	var h = HistogramVec(u32, struct{status: u16}, &.{0}){.noop = {}};
-	defer h.deinit(t.allocator);
+	defer h.deinit();
 	try h.observe(.{.status = 200}, 2);
 
 	var arr = std.ArrayList(u8).init(t.allocator);
@@ -564,7 +551,7 @@ test "HistogramVec: noop " {
 
 test "HistogramVec" {
 	var h = try HistogramVec(f64, struct{status: u16}, &.{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10}).init(t.allocator, "hst_1", .{}, .{});
-	defer h.deinit(t.allocator);
+	defer h.deinit();
 
 	var i: f64 = 0.001;
 	for (0..1000) |_| {

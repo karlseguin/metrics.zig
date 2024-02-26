@@ -14,47 +14,35 @@ pub fn Counter(comptime V: type) type {
 	assertCounterType(V);
 	return union(enum) {
 		noop: void,
-		impl: *Impl,
+		impl: Impl,
 
 		const Self = @This();
 
-		pub fn init(allocator: Allocator, comptime name: []const u8, comptime opts: Opts, comptime ropts: RegistryOpts) !Self {
+		pub fn init(comptime name: []const u8, comptime opts: Opts, comptime ropts: RegistryOpts) !Self {
 			switch (ropts.shouldExclude(name)) {
 				true => return .{.noop = {}},
-				false => {
-					const impl = try allocator.create(Impl);
-					errdefer allocator.destroy(impl);
-					impl.* = try Impl.init(ropts.prefix ++ name, opts);
-					return .{.impl = impl};
-				},
+				false => return .{.impl = try Impl.init(ropts.prefix ++ name, opts)},
 			}
 		}
 
-		pub fn incr(self: Self) void {
-			switch (self) {
+		pub fn incr(self: *Self) void {
+			switch (self.*) {
 				.noop => {},
-				.impl => |impl| impl.incr(),
+				.impl => |*impl| impl.incr(),
 			}
 		}
 
-		pub fn incrBy(self: Self, count: V) void {
-			switch (self) {
+		pub fn incrBy(self: *Self, count: V) void {
+			switch (self.*) {
 				.noop => {},
-				.impl => |impl| impl.incrBy(count),
+				.impl => |*impl| impl.incrBy(count),
 			}
 		}
 
-		pub fn write(self: Self, writer: anytype) !void {
-			switch (self) {
+		pub fn write(self: *Self, writer: anytype) !void {
+			switch (self.*) {
 				.noop => {},
-				.impl => |impl| return impl.write(writer),
-			}
-		}
-
-		pub fn deinit(self: Self, allocator: Allocator) void {
-			switch (self) {
-				.noop => {},
-				.impl => |impl| allocator.destroy(impl),
+				.impl => |*impl| return impl.write(writer),
 			}
 		}
 
@@ -68,6 +56,7 @@ pub fn Counter(comptime V: type) type {
 					.preamble = comptime m.preamble(name, .counter, true, opts.help),
 				};
 			}
+
 			pub fn incr(self: *Impl) void {
 				self.incrBy(1);
 			}
@@ -91,59 +80,49 @@ pub fn CounterVec(comptime V: type, comptime L: type) type {
 	assertCounterType(V);
 	return union(enum) {
 		noop: void,
-		impl: *Impl,
+		impl: Impl,
 
 		const Self = @This();
 
 		pub fn init(allocator: Allocator, comptime name: []const u8, comptime opts: Opts, comptime ropts: RegistryOpts) !Self {
 			switch (ropts.shouldExclude(name)) {
 				true => return .{.noop = {}},
-				false => {
-					const impl = try allocator.create(Impl);
-					errdefer allocator.destroy(impl);
-					impl.* = try Impl.init(allocator, ropts.prefix ++ name, opts);
-					return .{.impl = impl};
-				},
+				false => return .{.impl = try Impl.init(allocator, ropts.prefix ++ name, opts)},
 			}
 		}
 
-		// could get the allocator from impl.allocator, but taking it as a parameter
-		// makes the API the same between Counter and CounterVec
-		pub fn deinit(self: Self, allocator: Allocator) void {
-			switch (self) {
+		pub fn deinit(self: *Self) void {
+			switch (self.*) {
 				.noop => {},
-				.impl => |impl| {
-					impl.deinit();
-					allocator.destroy(impl);
-				},
+				.impl => |*impl| impl.deinit(),
 			}
 		}
 
-		pub fn incr(self: Self, labels: L) !void {
-			switch (self) {
+		pub fn incr(self: *Self, labels: L) !void {
+			switch (self.*) {
 				.noop => {},
-				.impl => |impl| return impl.incr(labels),
+				.impl => |*impl| return impl.incr(labels),
 			}
 		}
 
-		pub fn incrBy(self: Self, labels: L, count: V) !void {
-			switch (self) {
+		pub fn incrBy(self: *Self, labels: L, count: V) !void {
+			switch (self.*) {
 				.noop => {},
-				.impl => |impl| return impl.incrBy(labels, count),
+				.impl => |*impl| return impl.incrBy(labels, count),
 			}
 		}
 
-		pub fn remove(self: Self, labels: L) void {
-			switch (self) {
+		pub fn remove(self: *Self, labels: L) void {
+			switch (self.*) {
 				.noop => {},
-				.impl => |impl| impl.remove(labels),
+				.impl => |*impl| impl.remove(labels),
 			}
 		}
 
-		pub fn write(self: Self, writer: anytype) !void {
-			switch (self) {
+		pub fn write(self: *Self, writer: anytype) !void {
+			switch (self.*) {
 				.noop => {},
-				.impl => |impl| return impl.write(writer),
+				.impl => |*impl| return impl.write(writer),
 			}
 		}
 
@@ -272,7 +251,6 @@ const t = @import("t.zig");
 test "Counter: noop incr/incrBy" {
 	// these should just not crash
 	var c = Counter(u32){.noop = {}};
-	defer c.deinit(t.allocator);
 	c.incr();
 	c.incrBy(10);
 
@@ -283,8 +261,7 @@ test "Counter: noop incr/incrBy" {
 }
 
 test "Counter: incr/incrBy" {
-	var c = try Counter(u32).init(t.allocator, "t1", .{}, .{});
-	defer c.deinit(t.allocator);
+	var c = try Counter(u32).init("t1", .{}, .{});
 	c.incr();
 	try t.expectEqual(1, c.impl.count);
 	c.incrBy(10);
@@ -295,8 +272,7 @@ test "Counter: write" {
 	var arr = std.ArrayList(u8).init(t.allocator);
 	defer arr.deinit();
 
-	var c = try Counter(u32).init(t.allocator, "metric_cnt_1_x", .{}, .{.exclude = &.{"t_ex"}});
-	defer c.deinit(t.allocator);
+	var c = try Counter(u32).init("metric_cnt_1_x", .{}, .{.exclude = &.{"t_ex"}});
 
 	{
 		c.incr();
@@ -313,8 +289,7 @@ test "Counter: write" {
 }
 
 test "Counter: exclude" {
-	var c = try Counter(u32).init(t.allocator, "t_ex", .{}, .{.exclude = &.{"t_ex"}});
-	defer c.deinit(t.allocator);
+	var c = try Counter(u32).init("t_ex", .{}, .{.exclude = &.{"t_ex"}});
 	c.incr();
 
 	var arr = std.ArrayList(u8).init(t.allocator);
@@ -324,8 +299,7 @@ test "Counter: exclude" {
 }
 
 test "Counter: prefix" {
-	var c = try Counter(u32).init(t.allocator, "t1_p", .{}, .{.prefix = "hello_"});
-	defer c.deinit(t.allocator);
+	var c = try Counter(u32).init("t1_p", .{}, .{.prefix = "hello_"});
 	c.incr();
 
 	var arr = std.ArrayList(u8).init(t.allocator);
@@ -335,8 +309,7 @@ test "Counter: prefix" {
 }
 
 test "Counter: float incr/incrBy" {
-	var c = try Counter(f32).init(t.allocator, "t1", .{}, .{});
-	defer c.deinit(t.allocator);
+	var c = try Counter(f32).init("t1", .{}, .{});
 	c.incr();
 	try t.expectEqual(1, c.impl.count);
 	c.incrBy(12.1);
@@ -347,8 +320,7 @@ test "Counter: float write" {
 	var arr = std.ArrayList(u8).init(t.allocator);
 	defer arr.deinit();
 
-	var c = try Counter(f64).init(t.allocator, "metric_cnt_2_x", .{}, .{});
-	defer c.deinit(t.allocator);
+	var c = try Counter(f64).init("metric_cnt_2_x", .{}, .{});
 
 	{
 		c.incr();
@@ -367,7 +339,7 @@ test "Counter: float write" {
 test "CounterVec: noop incr/incrBy" {
 	// these should just not crash
 	var c = CounterVec(u32, struct{id: u32}){.noop = {}};
-	defer c.deinit(t.allocator);
+	defer c.deinit();
 	try c.incr(.{.id = 3});
 	try c.incrBy(.{.id = 10}, 20);
 
@@ -385,7 +357,7 @@ test "CounterVec: incr/incrBy + write" {
 
 	// these should just not crash
 	var c = try CounterVec(u64, struct{id: []const u8}).init(t.allocator, "counter_vec_1", .{.help = "h1"}, .{});
-	defer c.deinit(t.allocator);
+	defer c.deinit();
 
 	try c.incr(.{.id = "a"});
 	try c.write(arr.writer());
@@ -417,7 +389,7 @@ test "CounterVec: float incr/incrBy + write" {
 
 	// these should just not crash
 	var c = try CounterVec(f32, struct{id: []const u8}).init(t.allocator, "counter_vec_xx_2", .{.help = "h1"}, .{});
-	defer c.deinit(t.allocator);
+	defer c.deinit();
 
 	try c.incr(.{.id = "a"});
 	try c.write(arr.writer());
