@@ -21,7 +21,7 @@ pub fn Histogram(comptime V: type, comptime upper_bounds: []const V) type {
 
 		const Self = @This();
 
-		pub fn init(allocator: Allocator, comptime name: []const u8, opts: Opts, comptime ropts: RegistryOpts) !Self {
+		pub fn init(allocator: Allocator, comptime name: []const u8, comptime opts: Opts, comptime ropts: RegistryOpts) !Self {
 			switch (ropts.shouldExclude(name)) {
 				true => return .{.noop = {}},
 				false => {
@@ -58,20 +58,16 @@ pub fn Histogram(comptime V: type, comptime upper_bounds: []const V) type {
 		}
 
 		const Impl = struct {
-			metric: Metric,
 			sum: V,
 			count: usize,
+			preamble: []const u8,
 			buckets: [upper_bounds.len]V,
 			output_sum_prefix: []const u8,
 			output_count_prefix: []const u8,
 			output_bucket_prefixes: [upper_bounds.len][]const u8,
 			output_bucket_inf_prefix: []const u8,
 
-
-			fn init(allocator: Allocator, comptime name: []const u8, opts: Opts) !Impl {
-				const metric = try Metric.init(allocator, name, .histogram, opts);
-				errdefer metric.deinit(allocator);
-
+			fn init(allocator: Allocator, comptime name: []const u8, comptime opts: Opts) !Impl {
 				const output_sum_prefix = try std.fmt.allocPrint(allocator, "\n{s}_sum ", .{name});
 				errdefer allocator.free(output_sum_prefix);
 
@@ -97,7 +93,7 @@ pub fn Histogram(comptime V: type, comptime upper_bounds: []const V) type {
 				return .{
 					.sum = 0,
 					.count = 0,
-					.metric = metric,
+					.preamble = comptime m.preamble(name, .histogram, false, opts.help),
 					.output_sum_prefix = output_sum_prefix,
 					.output_count_prefix = output_count_prefix,
 					.output_bucket_prefixes = output_bucket_prefixes,
@@ -107,7 +103,6 @@ pub fn Histogram(comptime V: type, comptime upper_bounds: []const V) type {
 			}
 
 			fn deinit(self: Impl, allocator: Allocator) void {
-				self.metric.deinit(allocator);
 				allocator.free(self.output_sum_prefix);
 				allocator.free(self.output_count_prefix);
 				allocator.free(self.output_bucket_inf_prefix);
@@ -135,8 +130,7 @@ pub fn Histogram(comptime V: type, comptime upper_bounds: []const V) type {
 			}
 
 			pub fn write(self: *Impl, writer: anytype) !void {
-				const metric = &self.metric;
-				try metric.write(writer);
+				try writer.writeAll(self.preamble);
 
 				var sum: V = 0;
 				for (self.output_bucket_prefixes, 0..) |prefix, i| {
@@ -184,7 +178,7 @@ pub fn HistogramVec(comptime V: type, comptime L: type, comptime upper_bounds: [
 
 		const Self = @This();
 
-		pub fn init(allocator: Allocator, comptime name: []const u8, opts: Opts, comptime ropts: RegistryOpts) !Self {
+		pub fn init(allocator: Allocator, comptime name: []const u8, comptime opts: Opts, comptime ropts: RegistryOpts) !Self {
 			switch (ropts.shouldExclude(name)) {
 				true => return .{.noop = {}},
 				false => {
@@ -224,6 +218,7 @@ pub fn HistogramVec(comptime V: type, comptime L: type, comptime upper_bounds: [
 
 		const Impl = struct {
 			vec: MetricVec(L),
+			preamble: []const u8,
 			allocator: Allocator,
 			lock: std.Thread.RwLock,
 			values: MetricVec(L).HashMap(Value),
@@ -264,9 +259,8 @@ pub fn HistogramVec(comptime V: type, comptime L: type, comptime upper_bounds: [
 				}
 			};
 
-			fn init(allocator: Allocator, comptime name: []const u8, opts: Opts) !Impl {
-				const vec = try MetricVec(L).init(allocator, name, .histogram, opts);
-				errdefer vec.deinit(allocator);
+			fn init(allocator: Allocator, comptime name: []const u8, comptime opts: Opts) !Impl {
+				const vec = try MetricVec(L).init(name);
 
 				const output_sum_prefix = try std.fmt.allocPrint(allocator, "\n{s}_sum", .{name});
 				errdefer allocator.free(output_sum_prefix);
@@ -299,12 +293,12 @@ pub fn HistogramVec(comptime V: type, comptime L: type, comptime upper_bounds: [
 					.output_count_prefix = output_count_prefix,
 					.output_bucket_prefixes = output_bucket_prefixes,
 					.output_bucket_inf_prefix = output_bucket_inf_prefix,
+					.preamble = comptime m.preamble(name, .histogram, false, opts.help),
 				};
 			}
 
 			fn deinit(self: *Impl) void {
 				const allocator = self.allocator;
-				self.vec.deinit(allocator);
 				allocator.free(self.output_sum_prefix);
 				allocator.free(self.output_count_prefix);
 				allocator.free(self.output_bucket_inf_prefix);
@@ -390,8 +384,7 @@ pub fn HistogramVec(comptime V: type, comptime L: type, comptime upper_bounds: [
 			}
 
 			pub fn write(self: *Impl, writer: anytype) !void {
-				const vec = &self.vec;
-				try vec.write(writer);
+				try writer.writeAll(self.preamble);
 
 				const output_sum_prefix = self.output_sum_prefix;
 				const output_count_prefix = self.output_count_prefix;

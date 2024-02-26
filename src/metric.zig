@@ -4,32 +4,10 @@ const ascii = std.ascii;
 const Wyhash = std.hash.Wyhash;
 const Allocator = std.mem.Allocator;
 
-// Used by metrics that don't have labels (Counter, Gauge, Histogram). Owns the
-// output preamble, the "# HELP $HELP\n# TYPE $TYPE\n$name " that comes before
-// all metric values
-pub const Metric = struct {
-	preamble: []const u8,
-
-	const Type = enum {
-		counter,
-		gauge,
-		histogram,
-	};
-
-	pub fn init(allocator: Allocator, comptime name: []const u8, comptime tpe: Type, opts: anytype) !Metric {
-		comptime validateName(name);
-		return .{
-			.preamble = try preparePreamble(allocator, name, tpe, tpe != .histogram, opts.help),
-		};
-	}
-
-	pub fn deinit(self: Metric, allocator: Allocator) void {
-		allocator.free(self.preamble);
-	}
-
-	pub fn write(self: Metric, writer: anytype) !void {
-		return writer.writeAll(self.preamble);
-	}
+const MetricType = enum {
+	counter,
+	gauge,
+	histogram,
 };
 
 // Used by metrics that have labels (CounterVec, GaugeVec, HistogramVec). This
@@ -73,8 +51,6 @@ pub fn MetricVec(comptime L: type) type {
 		// The name of the metric. Unlike with a plain Metric, this doesn't include
 		// a trailing space (because attributes are glued to the metric name)
 		name: []const u8,
-		// The optional "# HELP $HELP\n" + the "# TYPE $TYPE]\n" line
-		preamble: []const u8,
 
 		// The label names (which are the names of L's fields)
 		labels: [fields.len][]const u8,
@@ -88,26 +64,18 @@ pub fn MetricVec(comptime L: type) type {
 
 		const Self = @This();
 
-		pub fn init(allocator: Allocator, comptime name: []const u8, comptime tpe: Metric.Type, opts: anytype) !Self {
+		pub fn init(comptime name: []const u8) !Self {
 			comptime validateName(name);
 
 			comptime var labels: [fields.len][]const u8 = undefined;
 			inline for (fields, 0..) |f, i| {
 				labels[i] = f.name;
 			}
+
 			return .{
 				.name = name,
 				.labels = labels,
-				.preamble = try preparePreamble(allocator, name, tpe, false, opts.help),
 			};
-		}
-
-		pub fn deinit(self: Self, allocator: Allocator) void {
-			allocator.free(self.preamble);
-		}
-
-		pub fn write(self: Self, writer: anytype) !void {
-			return writer.writeAll(self.preamble);
 		}
 
 		// The key of labeled metrics is the label itself (L), or more specifically
@@ -221,7 +189,7 @@ pub fn write(value: anytype, writer: anytype) !void {
 
 // Validates that a metric name is valid, based on:
 // https://prometheus.io/docs/concepts/data_model/#metric-names-and-labels
-fn validateName(name: []const u8) void {
+fn validateName(comptime name: []const u8) void {
 	if (name.len == 0) {
 		@compileError("Empty metric name is not valid");
 	}
@@ -420,94 +388,81 @@ fn HashContext(comptime K: type) type {
 // The "preamble" is the optional "# HELP $DESC\n" and "# TYPE $TYPE\n" string
 // which is output before the metric value. Help is optional, when null the
 // "# HELP ..." line is omitted.
-fn preparePreamble(allocator: Allocator, comptime name: []const u8, comptime tpe: Metric.Type, comptime append_name: bool, help_: ?[]const u8) ![]const u8 {
-	const suffix = if (append_name) name ++ " " else "";
-	const help = help_ orelse {
-		return std.fmt.allocPrint(allocator, "# TYPE {s} {s}\n{s}", .{name, @tagName(tpe), suffix});
-	};
+pub fn preamble(comptime name: []const u8, comptime tpe: MetricType, comptime append_name: bool, comptime help_: ?[]const u8) []const u8 {
+	comptime {
+		const suffix = if (append_name) name ++ " " else "";
+		const type_line = std.fmt.comptimePrint("# TYPE {s} {s}\n{s}", .{name, @tagName(tpe), suffix});
+		const help = help_ orelse return type_line;
 
-	// Help text requires \\ and \n to be escaped. Let's count how many of those
-	// we have.
-	var escape_count: usize = 0;
-	for (help) |c| {
-		if (c == '\\' or c == '\n') {
-			escape_count += 1;
-		}
-	}
-
-	var h = help;
-	if (escape_count > 0) {
-		// We need to escape at least one special character. We need to allocate
-		// a new string to hold the escaped value
-		var pos: usize = 0;
-
-		// Since we know the original length and the # of characters that need to
-		// be escaped, we know the final length)
-		var escaped = try allocator.alloc(u8, help.len + escape_count);
-
+		// Help text requires \\ and \n to be escaped. Let's count how many of those we have.
+		var escape_count: usize = 0;
 		for (help) |c| {
-			switch (c) {
-				'\\' => {
-					escaped[pos] = '\\';
-					pos += 1;
-					escaped[pos] = '\\';
-				},
-				'\n' => {
-					escaped[pos] = '\\';
-					pos += 1;
-					escaped[pos] = 'n';
-				},
-				else => escaped[pos] = c,
+			if (c == '\\' or c == '\n') {
+				escape_count += 1;
 			}
-			pos += 1;
 		}
 
-		h = escaped;
-	}
+		var h = help;
+		if (escape_count > 0) {
+			// We need to escape at least one special character. We need to allocate
+			// a new string to hold the escaped value
 
-	defer {
-		// the escaped string we just allocated/populated doesn't need to exist
-		// beyond this function, because we're about to allocate the entire
-		// preamble, which includes a copy of this.
-		if (escape_count > 0) allocator.free(h);
-	}
+			// Since we know the original length and the # of characters that need to
+			// be escaped, we know the final length)
+			var escaped: [help.len + escape_count]u8 = undefined;
 
-	return try std.fmt.allocPrint(allocator, "# HELP {s} {s}\n# TYPE {s} {s}\n{s}", .{name, h, name, @tagName(tpe), suffix});
+			var pos: usize = 0;
+			for (help) |c| {
+				switch (c) {
+					'\\' => {
+						escaped[pos] = '\\';
+						pos += 1;
+						escaped[pos] = '\\';
+					},
+					'\n' => {
+						escaped[pos] = '\\';
+						pos += 1;
+						escaped[pos] = 'n';
+					},
+					else => escaped[pos] = c,
+				}
+				pos += 1;
+			}
+
+			h = &escaped;
+		}
+
+		return std.fmt.comptimePrint("# HELP {s} {s}\n{s}", .{name, h, type_line});
+	}
 }
 
 const t = @import("t.zig");
-test "Metric: no help" {
-	const m = try Metric.init(t.allocator, "metric_test_1", .counter, .{.help = null});
-	defer m.deinit(t.allocator);
-	try t.expectString("# TYPE metric_test_1 counter\nmetric_test_1 ", m.preamble);
+test "preamble: no help" {
+	const p = comptime preamble("metric_test_1", .counter, true, null);
+	try t.expectString("# TYPE metric_test_1 counter\nmetric_test_1 ", p);
 }
 
-test "Metric: no help, histogram" {
+test "preamble: no help, histogram" {
 	// histogram doesn't include the metric name it he preamble
-	const m = try Metric.init(t.allocator, "metric_test_1", .histogram, .{.help = null});
-	defer m.deinit(t.allocator);
-	try t.expectString("# TYPE metric_test_1 histogram\n", m.preamble);
+	const p = comptime preamble("metric_test_1", .histogram, false, null);
+	try t.expectString("# TYPE metric_test_1 histogram\n", p);
 }
 
-test "Metric: simple help" {
-	const m = try Metric.init(t.allocator, "metric_test_2", .gauge, .{.help = "this is a valid help line"});
-	defer m.deinit(t.allocator);
-	try t.expectString("# HELP metric_test_2 this is a valid help line\n# TYPE metric_test_2 gauge\nmetric_test_2 ", m.preamble);
+test "preamble: simple help" {
+	const p = comptime preamble("metric_test_2", .gauge, true, "this is a valid help line");
+	try t.expectString("# HELP metric_test_2 this is a valid help line\n# TYPE metric_test_2 gauge\nmetric_test_2 ", p);
 }
 
-test "Metric: escape help" {
-	const m = try Metric.init(t.allocator, "metric_test_3", .histogram, .{.help = "th\\is is a\nvalid help line"});
-	defer m.deinit(t.allocator);
-	try t.expectString("# HELP metric_test_3 th\\\\is is a\\nvalid help line\n# TYPE metric_test_3 histogram\n", m.preamble);
+test "preamble: escape help" {
+	const p = comptime preamble("metric_test_3", .histogram, false, "th\\is is a\nvalid help line");
+	try t.expectString("# HELP metric_test_3 th\\\\is is a\\nvalid help line\n# TYPE metric_test_3 histogram\n", p);
 }
 
 test "MetricVec: labels" {
 	const m = try MetricVec(struct{
 		active: bool,
 		name: []const u8,
-	}).init(t.allocator, "metric_vec_test_1", .counter, .{.help = null});
-	defer m.deinit(t.allocator);
-	try t.expectString("# TYPE metric_vec_test_1 counter\n", m.preamble);
+	}).init("metric_vec_test_1");
 	try t.expectSlice([]const u8, &.{"active", "name"}, &m.labels);
 }
 

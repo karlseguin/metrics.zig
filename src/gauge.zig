@@ -19,13 +19,13 @@ pub fn Gauge(comptime V: type) type {
 
 		const Self = @This();
 
-		pub fn init(allocator: Allocator, comptime name: []const u8, opts: Opts, comptime ropts: RegistryOpts) !Self {
+		pub fn init(allocator: Allocator, comptime name: []const u8, comptime opts: Opts, comptime ropts: RegistryOpts) !Self {
 			switch (ropts.shouldExclude(name)) {
 				true => return .{.noop = {}},
 				false => {
 					const impl = try allocator.create(Impl);
 					errdefer allocator.destroy(impl);
-					impl.* = try Impl.init(allocator, ropts.prefix ++ name, opts);
+					impl.* = try Impl.init(ropts.prefix ++ name, opts);
 					return .{.impl = impl};
 				},
 			}
@@ -62,26 +62,19 @@ pub fn Gauge(comptime V: type) type {
 		pub fn deinit(self: Self, allocator: Allocator) void {
 			switch (self) {
 				.noop => {},
-				.impl => |impl| {
-					impl.deinit(allocator);
-					allocator.destroy(impl);
-				},
+				.impl => |impl| allocator.destroy(impl),
 			}
 		}
 
 		const Impl = struct {
 			value: V,
-			metric: Metric,
+			preamble: []const u8,
 
-			fn init(allocator: Allocator, comptime name: []const u8, opts: Opts) !Impl {
+			fn init(comptime name: []const u8, comptime opts: Opts) !Impl {
 				return .{
 					.value = 0,
-					.metric = try Metric.init(allocator, name, .gauge, opts),
+					.preamble = comptime m.preamble(name, .gauge, true, opts.help),
 				};
-			}
-
-			fn deinit(self: Impl, allocator: Allocator) void {
-				self.metric.deinit(allocator);
 			}
 
 			pub fn incr(self: *Impl) void {
@@ -97,8 +90,7 @@ pub fn Gauge(comptime V: type) type {
 			}
 
 			pub fn write(self: *const Impl, writer: anytype) !void {
-				const metric = &self.metric;
-				try metric.write(writer);
+				try writer.writeAll(self.preamble);
 				try m.write(@atomicLoad(V, &self.value, .Monotonic), writer);
 				return writer.writeByte('\n');
 			}
@@ -115,7 +107,7 @@ pub fn GaugeVec(comptime V: type, comptime L: type) type {
 
 		const Self = @This();
 
-		pub fn init(allocator: Allocator, comptime name: []const u8, opts: Opts, comptime ropts: RegistryOpts) !Self {
+		pub fn init(allocator: Allocator, comptime name: []const u8, comptime opts: Opts, comptime ropts: RegistryOpts) !Self {
 			switch (ropts.shouldExclude(name)) {
 				true => return .{.noop = {}},
 				false => {
@@ -176,6 +168,7 @@ pub fn GaugeVec(comptime V: type, comptime L: type) type {
 
 		const Impl = struct {
 			vec: MetricVec(L),
+			preamble: []const u8,
 			allocator: Allocator,
 			lock: std.Thread.RwLock,
 			values: MetricVec(L).HashMap(Value),
@@ -185,18 +178,18 @@ pub fn GaugeVec(comptime V: type, comptime L: type) type {
 				attributes: []const u8,
 			};
 
-			fn init(allocator: Allocator, comptime name: []const u8, opts: Opts) !Impl {
+			fn init(allocator: Allocator, comptime name: []const u8, comptime opts: Opts) !Impl {
 				return .{
 					.lock = .{},
 					.allocator = allocator,
-					.vec = try MetricVec(L).init(allocator, name, .gauge, opts),
+					.vec = try MetricVec(L).init(name),
 					.values = MetricVec(L).HashMap(Value){},
+					.preamble = comptime m.preamble(name, .gauge, false, opts.help),
 				};
 			}
 
 			fn deinit(self: *Impl) void {
 				const allocator = self.allocator;
-				self.vec.deinit(allocator);
 
 				var it = self.values.iterator();
 				while (it.next()) |kv| {
@@ -247,9 +240,9 @@ pub fn GaugeVec(comptime V: type, comptime L: type) type {
 			}
 
 			pub fn write(self: *Impl, writer: anytype) !void {
-				const vec = &self.vec;
-				try vec.write(writer);
-				const name = vec.name;
+				try writer.writeAll(self.preamble);
+
+				const name = self.vec.name;
 
 				self.lock.lockShared();
 				defer self.lock.unlockShared();
