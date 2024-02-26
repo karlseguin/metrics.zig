@@ -23,9 +23,6 @@ const Metrics = struct {
 
     // gauge can be an integer or float
     connected: m.Gauge(u16),
-
-    // histogram can be an integer or flat, it requires the buckets to use
-    latency: m.Histogram(f64, &.{0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10}),
 };
 
 // meant to be called within the application
@@ -41,22 +38,22 @@ pub fn connected(value: u16) void {
 // meant to be called once on application startup
 pub fn initializeMetrics(allocator: Allocator, comptime opts: m.RegistryOpts) !void {
     metrics = .{
-        .hits = try m.Counter(u32).init(allocator, "hits", .{}, opts),
-        .connected = try m.Gauge(u16).init(allocator, "connected", .{}, opts),
+        .hits = try m.Counter(u32).init("hits", .{}, opts),
+        .connected = try m.Gauge(u16).init("connected", .{}, opts),
     };
 }
 
 // thread safe
 pub fn writeMetrics(writer: anytype) !void {
-    return m.write(metrics, writer);
+    return m.write(&metrics, writer);
 }
 ```
 
 The call to `m.initializeNoop(Metrics)` creates a `Metrics` and initializes each metric (`hits`, `connected` and `latency`) to a "noop" implementation (tagged unions are used). The `initializeMetrics` is called on application startup and sets these metrics to real implementation. 
 
-For library developers, this means their global metrics is always safe to use (all methods call noop). For application developers, it gives them control over which metrics to enable.
+For library developers, this means their global metrics are always safe to use (all methods call noop). For application developers, it gives them control over which metrics to enable.
 
-All metrics are initialized with the same fields, an allocator, a name and **two options**. Why two options? The first is designed for library developers, the second is designed to give application developers additional control.
+All metrics take a name and **two options**. Why two options? The first is designed for library developers, the second is designed to give application developers additional control.
 
 Currently the first option has a single field:
 * `help: ?[]const u8 = nulls` - Used to generate the `# HELP $HELP` output line
@@ -64,6 +61,8 @@ Currently the first option has a single field:
 The second option should has two fields:
 * `prefix: []const u8 = ""` - Appends `prefix` to the start of each metric name.
 * `exclude: ?[]const []const u8 = null` - A list of metric names to exclude (not including the prefix).
+
+`CounterVec`, `GaugeVec`, `Histogram` and `HistogramVec` also require an allocator.
 
 ### Note for Library Developers
 Library developers are free to change the above as needed. However, having libraries consistently expose an `initializeMetrics` and `writeMetrics` should help application developers.
@@ -110,11 +109,17 @@ pub fn initializeMetrics(allocator: Allocator, opts: m.RegistryOpts) !void {
 
 // Labels are compile-time checked. Using "anytype" here
 // is just lazy so we don't have to declare the label structure
-// Would be called as:
-//   @import("metrics.zig").hit(.{.status = 200, .path = "/about.txt"});
-pub fn hit(labels: anytype) !void {
+pub fn hit(labels: anytype) !void {    
     return metrics.hits.incr(labels);
 }
+```
+
+The above would be called as:
+
+```zig
+// import your metrics file
+const metrics = @import("metrics.zig");
+metrics.hit(.{.status = 200, .path = "/about.txt"});
 ```
 
 Internally, every metric is a union between a "noop" and an actual implementation. This allows metrics to be globally initialized as noop and then enabled on startup. The benefit of this approach is that library developers can safely and easily use their metrics whether or not the application has enabled them.
@@ -186,91 +191,92 @@ Library developers are expected to wrap this method in a `writeMetric(writer: an
 ### Counter(T)
 A `Counter(T)` is used for incrementing values. `T` can be an unsigned integer or a float. Its two main methods are `incr()` and `incrBy(value: T)`. `incr()` is a short version of `incrBy(1)`.
 
-#### `init(allocator: Allocator, comptime name: []const, opts: Opts, ropts: RegistryOpts) !Counter(T)`
-Initializes the counter. Name must be given at comptime. 
+#### `init(comptime name: []const, comptime opts: Opts, comptime ropts: RegistryOpts) !Counter(T)`
+Initializes the counter. 
 
 Opts is:
 * `help: ?[]const` - optional help text to include in the prometheus output
 
-#### `deinit(self: Counter(T), allocator: Allocator) void`
-Deallocates the counter
 
-#### `incr(self: Counter(T)) void`
+#### `incr(self: *Counter(T)) void`
 Increments the counter by 1.
 
-#### `incrBy(self: Counter(T), value: T) void`
+#### `incrBy(self: *Counter(T), value: T) void`
 Increments the counter by `value`.
 
-#### `write(self: Counter(T), writer: anytype) !void`
+#### `write(self: *const Counter(T), writer: anytype) !void`
 Writes the counter to `writer`.
 
 ### CounterVec(T, L)
 A `CounterVec(T, L)` is used for incrementing values with labels. `T` can be an unsigned integer or a float. `L` must be a struct where the field names and types will define the lables. Its two main methods are `incr(labels: L)` and `incrBy(labels: L, value: T)`. `incr(L)` is a short version of `incrBy(L, 1)`.
 
-#### `init(allocator: Allocator, comptime name: []const, opts: Opts, ropts: RegistryOpts) !CounterVec(T, L)`
+#### `init(allocator: Allocator, comptime name: []const, comptim eopts: Opts, comptime ropts: RegistryOpts) !CounterVec(T, L)`
 Initializes the counter. Name must be given at comptime. 
 
 Opts is:
 * `help: ?[]const` - optional help text to include in the prometheus output
 
-#### `deinit(self: CounterVec(T, L), allocator: Allocator) void`
+#### `deinit(self: *CounterVec(T, L)) void`
 Deallocates the counter
 
-#### `incr(self: CounterVec(T, L), labels: L) !void`
+#### `incr(self: *CounterVec(T, L), labels: L) !void`
 Increments the counter by 1. Vectored metrics can fail.
 
-#### `incrBy(self: CounterVec(T, L), labels: L, value: T) !void`
+#### `incrBy(self: *CounterVec(T, L), labels: L, value: T) !void`
 Increments the counter by `value`. Vectored metrics can fail.
 
-#### `write(self: CounterVec(T, L), writer: anytype) !void`
+#### `remove(self: *CounterVec(T, L), labels: L) void`
+Removes the labeled value from the counter. Safe to call if `labels` is not an existing label.
+
+#### `write(self: *CounterVec(T, L), writer: anytype) !void`
 Writes the counter to `writer`.
 
 ### Gauge(T)
 A `Gauge(T)` is used for setting values. `T` can be an integer or a float. Its main methods are `incr()`, `incrBy(value: T)` and `set(value: T)`. `incr()` is a short version of `incrBy(1)`.
 
-#### `init(allocator: Allocator, comptime name: []const, opts: Opts, ropts: RegistryOpts) !Gauge(T)`
+#### `init(comptime name: []const, comptime opts: Opts, comptime ropts: RegistryOpts) !Gauge(T)`
 Initializes the gauge. Name must be given at comptime. 
 
 Opts is:
 * `help: ?[]const` - optional help text to include in the prometheus output
 
-#### `deinit(self: Gauge(T), allocator: Allocator) void`
-Deallocates the gauge
-
-#### `incr(self: Gauge(T)) void`
+#### `incr(self: *Gauge(T)) void`
 Increments the gauge by 1.
 
-#### `incrBy(self: Gauge(T), value: T) void`
+#### `incrBy(self: *Gauge(T), value: T) void`
 Increments the gauge by `value`.
 
-#### `set(self: Gauge(T), value: T) void`
+#### `set(self: *Gauge(T), value: T) void`
 Sets the the gauge to `value`.
 
-#### `write(self: Gauge(T), writer: anytype) !void`
+#### `write(self: *Gauge(T), writer: anytype) !void`
 Writes the gauge to `writer`.
 
 ### GaugeVec(T, L)
 A `GaugeVec(T, L)` is used for incrementing values with labels. `T` can be an integer or a float. `L` must be a struct where the field names and types will define the lables. Its main methods are `incr(labels: L)`, `incrBy(labels: L, value: T)` and `set(labels: L, value: T)`. `incr(L)` is a short version of `incrBy(L, 1)`.
 
-#### `init(allocator: Allocator, comptime name: []const, opts: Opts, ropts: RegistryOpts) !GaugeVec(T, L)`
+#### `init(allocator: Allocator, comptime name: []const, comptime opts: Opts, comptime ropts: RegistryOpts) !GaugeVec(T, L)`
 Initializes the gauge. Name must be given at comptime. 
 
 Opts is:
 * `help: ?[]const` - optional help text to include in the prometheus output
 
-#### `deinit(self: GaugeVec(T, L), allocator: Allocator) void`
+#### `deinit(self: *GaugeVec(T, L)) void`
 Deallocates the gauge
 
-#### `incr(self: GaugeVec(T, L), labels: L) !void`
+#### `incr(self: *GaugeVec(T, L), labels: L) !void`
 Increments the gauge by 1. Vectored metrics can fail.
 
-#### `incrBy(self: GaugeVec(T, L), labels: L, value: T) !void`
+#### `incrBy(self: *GaugeVec(T, L), labels: L, value: T) !void`
 Increments the gauge by `value`. Vectored metrics can fail.
 
-#### `set(self: GaugeVec(T, L), labels: L, value: T) !void`
+#### `set(self: *GaugeVec(T, L), labels: L, value: T) !void`
 Sets the gauge to `value`. Vectored metrics can fail.
 
-#### `write(self: GaugeVec(T, L), writer: anytype) !void`
+#### `remove(self: *GaugeVec(T, L), labels: L) void`
+Removes the labeled value from the gauge. Safe to call if `labels` is not an existing label.
+
+#### `write(self: *GaugeVec(T, L), writer: anytype) !void`
 Writes the gauge to `writer`.
 
 ### Histogram(T, []T)
@@ -278,19 +284,19 @@ A `Histogram(T, []T)` is used  to track the size and frequency of events. `T` ca
 
 Observed valued will fall within one of the provided buckets, `[]T`. The buckets must be in ascending order. A final "infinite" bucket *should not* be provided.
 
-#### `init(allocator: Allocator, comptime name: []const, opts: Opts, ropts: RegistryOpts) !Histogram(T, []T)`
+#### `init(allocator: Allocator, comptime name: []const, comptime opts: Opts, comptime ropts: RegistryOpts) !Histogram(T, []T)`
 Initializes the histogram. Name must be given at comptime. 
 
 Opts is:
 * `help: ?[]const` - optional help text to include in the prometheus output
 
-#### `deinit(self: Histogram(T, []T), allocator: Allocator) void`
+#### `deinit(self: *Histogram(T, []T)) void`
 Deallocates the histogram
 
-#### `observe(self: Histogram(T, []T), value: T) void`
+#### `observe(self: *Histogram(T, []T), value: T) void`
 Observes `value`, bucketing it based on the provided comptime buckets.
 
-#### `write(self: Histogram(T, []T), writer: anytype) !void`
+#### `write(self: *Histogram(T, []T), writer: anytype) !void`
 Writes the histogram to `writer`.
 
 ### Histogram(T, L, []T)
@@ -298,17 +304,20 @@ A `Histogram(T, L, []T)` is used  to track the size and frequency of events. `T`
 
 Observed valued will fall within one of the provided buckets, `[]T`. The buckets must be in ascending order. A final "infinite" bucket *should not* be provided.
 
-#### `init(allocator: Allocator, comptime name: []const, opts: Opts, ropts: RegistryOpts) !Histogram(T, L, []T)`
+#### `init(allocator: Allocator, comptime name: []const, comptime opts: Opts, comptime ropts: RegistryOpts) !Histogram(T, L, []T)`
 Initializes the histogram. Name must be given at comptime. 
 
 Opts is:
 * `help: ?[]const` - optional help text to include in the prometheus output
 
-#### `deinit(self: Histogram(T, L, []T), allocator: Allocator) void`
+#### `deinit(self: *Histogram(T, L, []T)) void`
 Deallocates the histogram
 
 #### `observe(self: Histogram(T, L, []T), value: T) void`
 Observes `value`, bucketing it based on the provided comptime buckets.
+
+#### `remove(self: *Histogram(T, L, []T), labels: L) void`
+Removes the labeled value from the histogram. Safe to call if `labels` is not an existing label.
 
 #### `write(self: Histogram(T, L, []T), writer: anytype) !void`
 Writes the histogram to `writer`.

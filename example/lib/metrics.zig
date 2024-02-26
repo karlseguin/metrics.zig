@@ -36,11 +36,11 @@ pub fn latency(labels: anytype, value: f32) !void {
 pub fn initialize(allocator: Allocator, comptime opts: m.RegistryOpts) !void {
 	metrics = .{
 		.hits = try Metrics.Hits.init(allocator, "lib_hits", .{}, opts),
-		.active = try Metrics.Active.init(allocator, "lib_active", .{}, opts),
+		.active = try Metrics.Active.init("lib_active", .{}, opts),
 		.latency = try Metrics.Latency.init(allocator, "lib_latency", .{}, opts),
 	};
 }
 
 pub fn write(writer: anytype) !void {
-	return m.write(metrics, writer);
+	return m.write(&metrics, writer);
 }
