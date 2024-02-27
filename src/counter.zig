@@ -46,7 +46,7 @@ pub fn Counter(comptime V: type) type {
 			}
 		}
 
-		const Impl = struct {
+		pub const Impl = struct {
 			count: V,
 			preamble: []const u8,
 
@@ -126,7 +126,7 @@ pub fn CounterVec(comptime V: type, comptime L: type) type {
 			}
 		}
 
-		const Impl = struct {
+		pub const Impl = struct {
 			vec: MetricVec(L),
 			preamble: []const u8,
 			allocator: Allocator,

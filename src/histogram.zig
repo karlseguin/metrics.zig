@@ -42,7 +42,7 @@ pub fn Histogram(comptime V: type, comptime upper_bounds: []const V) type {
 			}
 		}
 
-		const Impl = struct {
+		pub const Impl = struct {
 			sum: V,
 			count: usize,
 			preamble: []const u8,
@@ -174,7 +174,7 @@ pub fn HistogramVec(comptime V: type, comptime L: type, comptime upper_bounds: [
 			}
 		}
 
-		const Impl = struct {
+		pub const Impl = struct {
 			vec: MetricVec(L),
 			preamble: []const u8,
 			allocator: Allocator,
