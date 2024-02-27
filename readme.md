@@ -36,10 +36,10 @@ pub fn connected(value: u16) void {
 }
 
 // meant to be called once on application startup
-pub fn initializeMetrics(allocator: Allocator, comptime opts: m.RegistryOpts) !void {
+pub fn initializeMetrics(comptime opts: m.RegistryOpts) !void {
     metrics = .{
-        .hits = try m.Counter(u32).init("hits", .{}, opts),
-        .connected = try m.Gauge(u16).init("connected", .{}, opts),
+        .hits = m.Counter(u32).init("hits", .{}, opts),
+        .connected = m.Gauge(u16).init("connected", .{}, opts),
     };
 }
 
@@ -72,7 +72,7 @@ Library developers should ask their users to call `try initializeMetrics(allocat
 The `RegistryOpts` parameter should be supplied by the application and passed to each metric-initializer as-is. 
 
 ### Labels (vector-metrics)
-Every metric type supports a vectored variant. This allows labels to be attached to metrics. As you'll see in the metric API section, most vectored metrics methods can fail (as they may need to do allocation for new label values).
+Every metric type supports a vectored variant. This allows labels to be attached to metrics. This metrics require an `std.mem.Allocator` and, as you'll see in the metric API section, most of their methods can fail.
 
 ```zig
 var metrics = m.initializeNoop(Metrics);
@@ -81,6 +81,7 @@ const Metrics = struct {
     hits: m.CounterVec(u32, struct{status: u16, name: []const u8}),
 };
 
+// All labeled metrics require an allocator
 pub fn initializeMetrics(allocator: Allocator, opts: m.RegistryOpts) !void {
     metrics = .{
         .hits = try m.CounterVec(u32, struct{status: u16, name: []const u8}).init(allocator, "hits", .{}, opts),
@@ -134,14 +135,14 @@ const Metrics = struct {
     const Latency = m.Histogram(f32, &.{0.005, 0.01, 0.05, 0.1, 0.25, 1, 5, 10});
 };
 
-pub fn initializeMetrics(allocator: Allocator, opts: m.RegistryOpts) !void {
+pub fn initializeMetrics(opts: m.RegistryOpts) !void {
     metrics = .{
-        .latency = try Metrics.Latency.init(allocator, "hits", .{}, opts),
+        .latency = Metrics.Latency.init("hits", .{}, opts),
     };
 }
 ```
 
-The `HistogramVec` is even more verbose, requiring the label struct and bucket list:
+The `HistogramVec` is even more verbose, requiring the label struct and bucket list. And, like all vectored metrics, requires an `std.mem.Allocator` and can fail:
 
 ```zig
 var metrics = m.initializeNoop(Metrics);
@@ -186,7 +187,7 @@ This method is designed to allow a global "metrics" instance to exist and be saf
 #### `write(metrics: anytype, writer anytype) !void`
 Calls the `write(writer) !void` method on every metric field within `metrics`.
 
-Library developers are expected to wrap this method in a `writeMetric(writer: anytype) !void` function.
+Library developers are expected to wrap this method in a `writeMetric(writer: anytype) !void` function. This function requires a pointer to your metrics.
 
 ### Counter(T)
 A `Counter(T)` is used for incrementing values. `T` can be an unsigned integer or a float. Its two main methods are `incr()` and `incrBy(value: T)`. `incr()` is a short version of `incrBy(1)`.
@@ -284,14 +285,11 @@ A `Histogram(T, []T)` is used  to track the size and frequency of events. `T` ca
 
 Observed valued will fall within one of the provided buckets, `[]T`. The buckets must be in ascending order. A final "infinite" bucket *should not* be provided.
 
-#### `init(allocator: Allocator, comptime name: []const, comptime opts: Opts, comptime ropts: RegistryOpts) !Histogram(T, []T)`
+#### `init(comptime name: []const, comptime opts: Opts, comptime ropts: RegistryOpts) !Histogram(T, []T)`
 Initializes the histogram. Name must be given at comptime. 
 
 Opts is:
 * `help: ?[]const` - optional help text to include in the prometheus output
-
-#### `deinit(self: *Histogram(T, []T)) void`
-Deallocates the histogram
 
 #### `observe(self: *Histogram(T, []T), value: T) void`
 Observes `value`, bucketing it based on the provided comptime buckets.

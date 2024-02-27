@@ -85,7 +85,7 @@ test "metrics: write" {
 	};
 
 	var m = M{
-		.active = try Gauge(u64).init("active", .{}, .{}),
+		.active = Gauge(u64).init("active", .{}, .{}),
 		.hits = try M.Hits.init(t.allocator, "hits", .{}, .{}),
 		.timing = try M.Timing.init(t.allocator, "timing", .{.help = "the timing"}, .{.prefix = "x_"})
 	};

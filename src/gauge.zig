@@ -19,10 +19,10 @@ pub fn Gauge(comptime V: type) type {
 
 		const Self = @This();
 
-		pub fn init(comptime name: []const u8, comptime opts: Opts, comptime ropts: RegistryOpts) !Self {
+		pub fn init(comptime name: []const u8, comptime opts: Opts, comptime ropts: RegistryOpts) Self {
 			switch (ropts.shouldExclude(name)) {
 				true => return .{.noop = {}},
-				false => return .{.impl = try Impl.init(ropts.prefix ++ name, opts)},
+				false => return .{.impl = Impl.init(ropts.prefix ++ name, opts)},
 			}
 		}
 
@@ -58,7 +58,7 @@ pub fn Gauge(comptime V: type) type {
 			value: V,
 			preamble: []const u8,
 
-			fn init(comptime name: []const u8, comptime opts: Opts) !Impl {
+			fn init(comptime name: []const u8, comptime opts: Opts) Impl {
 				return .{
 					.value = 0,
 					.preamble = comptime m.preamble(name, .gauge, true, opts.help),
@@ -305,7 +305,7 @@ test "Gauge: noop incr/incrBy/set" {
 }
 
 test "Gauge: incr/incrBy/set" {
-	var g = try Gauge(i32).init("t1", .{}, .{});
+	var g = Gauge(i32).init("t1", .{}, .{});
 
 	g.incr();
 	try t.expectEqual(1, g.impl.value);
@@ -324,7 +324,7 @@ test "Gauge: write" {
 	var arr = std.ArrayList(u8).init(t.allocator);
 	defer arr.deinit();
 
-	var g = try Gauge(i32).init("metric_grp_1_x", .{}, .{});
+	var g = Gauge(i32).init("metric_grp_1_x", .{}, .{});
 
 	{
 		g.incr();
@@ -348,7 +348,7 @@ test "Gauge: write" {
 }
 
 test "Gauge: float incr/incrBy/set" {
-	var c = try Gauge(f32).init("t1", .{}, .{});
+	var c = Gauge(f32).init("t1", .{}, .{});
 	c.incr();
 	try t.expectEqual(1, c.impl.value);
 	c.incrBy(-3.9);
@@ -361,7 +361,7 @@ test "Gauge: float write" {
 	var arr = std.ArrayList(u8).init(t.allocator);
 	defer arr.deinit();
 
-	var c = try Gauge(f64).init("metric_g_2_x", .{}, .{});
+	var c = Gauge(f64).init("metric_g_2_x", .{}, .{});
 
 	{
 		c.incr();

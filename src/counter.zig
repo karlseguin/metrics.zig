@@ -18,10 +18,10 @@ pub fn Counter(comptime V: type) type {
 
 		const Self = @This();
 
-		pub fn init(comptime name: []const u8, comptime opts: Opts, comptime ropts: RegistryOpts) !Self {
+		pub fn init(comptime name: []const u8, comptime opts: Opts, comptime ropts: RegistryOpts) Self {
 			switch (ropts.shouldExclude(name)) {
 				true => return .{.noop = {}},
-				false => return .{.impl = try Impl.init(ropts.prefix ++ name, opts)},
+				false => return .{.impl = Impl.init(ropts.prefix ++ name, opts)},
 			}
 		}
 
@@ -50,7 +50,7 @@ pub fn Counter(comptime V: type) type {
 			count: V,
 			preamble: []const u8,
 
-			fn init(comptime name: []const u8, comptime opts: Opts) !Impl {
+			fn init(comptime name: []const u8, comptime opts: Opts) Impl {
 				return .{
 					.count = 0,
 					.preamble = comptime m.preamble(name, .counter, true, opts.help),
@@ -261,7 +261,7 @@ test "Counter: noop incr/incrBy" {
 }
 
 test "Counter: incr/incrBy" {
-	var c = try Counter(u32).init("t1", .{}, .{});
+	var c = Counter(u32).init("t1", .{}, .{});
 	c.incr();
 	try t.expectEqual(1, c.impl.count);
 	c.incrBy(10);
@@ -272,7 +272,7 @@ test "Counter: write" {
 	var arr = std.ArrayList(u8).init(t.allocator);
 	defer arr.deinit();
 
-	var c = try Counter(u32).init("metric_cnt_1_x", .{}, .{.exclude = &.{"t_ex"}});
+	var c = Counter(u32).init("metric_cnt_1_x", .{}, .{.exclude = &.{"t_ex"}});
 
 	{
 		c.incr();
@@ -289,7 +289,7 @@ test "Counter: write" {
 }
 
 test "Counter: exclude" {
-	var c = try Counter(u32).init("t_ex", .{}, .{.exclude = &.{"t_ex"}});
+	var c = Counter(u32).init("t_ex", .{}, .{.exclude = &.{"t_ex"}});
 	c.incr();
 
 	var arr = std.ArrayList(u8).init(t.allocator);
@@ -299,7 +299,7 @@ test "Counter: exclude" {
 }
 
 test "Counter: prefix" {
-	var c = try Counter(u32).init("t1_p", .{}, .{.prefix = "hello_"});
+	var c = Counter(u32).init("t1_p", .{}, .{.prefix = "hello_"});
 	c.incr();
 
 	var arr = std.ArrayList(u8).init(t.allocator);
@@ -309,7 +309,7 @@ test "Counter: prefix" {
 }
 
 test "Counter: float incr/incrBy" {
-	var c = try Counter(f32).init("t1", .{}, .{});
+	var c = Counter(f32).init("t1", .{}, .{});
 	c.incr();
 	try t.expectEqual(1, c.impl.count);
 	c.incrBy(12.1);
@@ -320,7 +320,7 @@ test "Counter: float write" {
 	var arr = std.ArrayList(u8).init(t.allocator);
 	defer arr.deinit();
 
-	var c = try Counter(f64).init("metric_cnt_2_x", .{}, .{});
+	var c = Counter(f64).init("metric_cnt_2_x", .{}, .{});
 
 	{
 		c.incr();

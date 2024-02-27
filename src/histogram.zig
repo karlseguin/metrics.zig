@@ -21,10 +21,10 @@ pub fn Histogram(comptime V: type, comptime upper_bounds: []const V) type {
 
 		const Self = @This();
 
-		pub fn init(allocator: Allocator, comptime name: []const u8, comptime opts: Opts, comptime ropts: RegistryOpts) !Self {
+		pub fn init(comptime name: []const u8, comptime opts: Opts, comptime ropts: RegistryOpts) Self {
 			switch (ropts.shouldExclude(name)) {
 				true => return .{.noop = {}},
-				false => return .{.impl = try Impl.init(allocator, ropts.prefix ++ name, opts)},
+				false => return .{.impl = comptime Impl.init(ropts.prefix ++ name, opts)},
 			}
 		}
 
@@ -42,17 +42,9 @@ pub fn Histogram(comptime V: type, comptime upper_bounds: []const V) type {
 			}
 		}
 
-		pub fn deinit(self: *Self) void {
-			switch (self.*) {
-				.noop => {},
-				.impl => |*impl| impl.deinit(),
-			}
-		}
-
 		const Impl = struct {
 			sum: V,
 			count: usize,
-			allocator: Allocator,
 			preamble: []const u8,
 			buckets: [upper_bounds.len]V,
 			output_sum_prefix: []const u8,
@@ -60,49 +52,28 @@ pub fn Histogram(comptime V: type, comptime upper_bounds: []const V) type {
 			output_bucket_prefixes: [upper_bounds.len][]const u8,
 			output_bucket_inf_prefix: []const u8,
 
-			fn init(allocator: Allocator, comptime name: []const u8, comptime opts: Opts) !Impl {
-				const output_sum_prefix = try std.fmt.allocPrint(allocator, "\n{s}_sum ", .{name});
-				errdefer allocator.free(output_sum_prefix);
+			fn init(comptime name: []const u8, comptime opts: Opts) Impl {
+				comptime {
+					const output_sum_prefix = std.fmt.comptimePrint("\n{s}_sum ", .{name});
+					const output_count_prefix = std.fmt.comptimePrint("\n{s}_count ", .{name});
 
-				const output_count_prefix = try std.fmt.allocPrint(allocator, "\n{s}_count ", .{name});
-				errdefer allocator.free(output_count_prefix);
+					const output_bucket_inf_prefix = std.fmt.comptimePrint("{s}_bucket{{le=\"+Inf\"}} ", .{name});
+					var output_bucket_prefixes: [upper_bounds.len][]const u8 = undefined;
 
-				const output_bucket_inf_prefix = try std.fmt.allocPrint(allocator, "{s}_bucket{{le=\"+Inf\"}} ", .{name});
-				errdefer allocator.free(output_bucket_inf_prefix);
-
-				var output_bucket_prefixes: [upper_bounds.len][]const u8 = undefined;
-				var initialized: usize = 0;
-				errdefer {
-					for (0..initialized) |i| {
-						allocator.free(output_bucket_prefixes[i]);
+					for (upper_bounds, 0..) |upper, i| {
+						output_bucket_prefixes[i] = std.fmt.comptimePrint("{s}_bucket{{le=\"{d}\"}} ", .{name, upper});
 					}
-				}
 
-				for (upper_bounds, 0..) |upper, i| {
-					output_bucket_prefixes[i] = try std.fmt.allocPrint(allocator, "{s}_bucket{{le=\"{d}\"}} ", .{name, upper});
-					initialized += 1;
-				}
-
-				return .{
-					.sum = 0,
-					.count = 0,
-					.allocator = allocator,
-					.preamble = comptime m.preamble(name, .histogram, false, opts.help),
-					.output_sum_prefix = output_sum_prefix,
-					.output_count_prefix = output_count_prefix,
-					.output_bucket_prefixes = output_bucket_prefixes,
-					.output_bucket_inf_prefix = output_bucket_inf_prefix,
-					.buckets = std.mem.zeroes([upper_bounds.len]V),
-				};
-			}
-
-			fn deinit(self: Impl) void {
-				const allocator = self.allocator;
-				allocator.free(self.output_sum_prefix);
-				allocator.free(self.output_count_prefix);
-				allocator.free(self.output_bucket_inf_prefix);
-				for (self.output_bucket_prefixes) |obf| {
-					allocator.free(obf);
+					return .{
+						.sum = 0,
+						.count = 0,
+						.preamble = m.preamble(name, .histogram, false, opts.help),
+						.output_sum_prefix = output_sum_prefix,
+						.output_count_prefix = output_count_prefix,
+						.output_bucket_prefixes = output_bucket_prefixes,
+						.output_bucket_inf_prefix = output_bucket_inf_prefix,
+						.buckets = std.mem.zeroes([upper_bounds.len]V),
+					};
 				}
 			}
 
@@ -475,7 +446,6 @@ const t = @import("t.zig");
 test "Histogram: noop " {
 	// these should just not crash
 	var h = Histogram(u32, &.{0}){.noop = {}};
-	defer h.deinit();
 	h.observe(2);
 
 	var arr = std.ArrayList(u8).init(t.allocator);
@@ -485,8 +455,7 @@ test "Histogram: noop " {
 }
 
 test "Histogram" {
-	var h = try Histogram(f64, &.{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10}).init(t.allocator, "hst_1", .{}, .{});
-	defer h.deinit();
+	var h = Histogram(f64, &.{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10}).init("hst_1", .{}, .{});
 
 	var i: f64 = 0.001;
 	for (0..1000) |_| {
