@@ -58,7 +58,7 @@ pub fn Gauge(comptime V: type) type {
 			value: V,
 			preamble: []const u8,
 
-			fn init(comptime name: []const u8, comptime opts: Opts) Impl {
+			pub fn init(comptime name: []const u8, comptime opts: Opts) Impl {
 				return .{
 					.value = 0,
 					.preamble = comptime m.preamble(name, .gauge, true, opts.help),
@@ -156,7 +156,7 @@ pub fn GaugeVec(comptime V: type, comptime L: type) type {
 				attributes: []const u8,
 			};
 
-			fn init(allocator: Allocator, comptime name: []const u8, comptime opts: Opts) !Impl {
+			pub fn init(allocator: Allocator, comptime name: []const u8, comptime opts: Opts) !Impl {
 				return .{
 					.lock = .{},
 					.allocator = allocator,
@@ -166,7 +166,7 @@ pub fn GaugeVec(comptime V: type, comptime L: type) type {
 				};
 			}
 
-			fn deinit(self: *Impl) void {
+			pub fn deinit(self: *Impl) void {
 				const allocator = self.allocator;
 
 				var it = self.values.iterator();

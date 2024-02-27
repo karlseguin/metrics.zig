@@ -52,7 +52,7 @@ pub fn Histogram(comptime V: type, comptime upper_bounds: []const V) type {
 			output_bucket_prefixes: [upper_bounds.len][]const u8,
 			output_bucket_inf_prefix: []const u8,
 
-			fn init(comptime name: []const u8, comptime opts: Opts) Impl {
+			pub fn init(comptime name: []const u8, comptime opts: Opts) Impl {
 				comptime {
 					const output_sum_prefix = std.fmt.comptimePrint("\n{s}_sum ", .{name});
 					const output_count_prefix = std.fmt.comptimePrint("\n{s}_count ", .{name});
@@ -217,7 +217,7 @@ pub fn HistogramVec(comptime V: type, comptime L: type, comptime upper_bounds: [
 				}
 			};
 
-			fn init(allocator: Allocator, comptime name: []const u8, comptime opts: Opts) !Impl {
+			pub fn init(allocator: Allocator, comptime name: []const u8, comptime opts: Opts) !Impl {
 				const vec = try MetricVec(L).init(name);
 
 				const output_sum_prefix = try std.fmt.allocPrint(allocator, "\n{s}_sum", .{name});
@@ -255,7 +255,7 @@ pub fn HistogramVec(comptime V: type, comptime L: type, comptime upper_bounds: [
 				};
 			}
 
-			fn deinit(self: *Impl) void {
+			pub fn deinit(self: *Impl) void {
 				const allocator = self.allocator;
 				allocator.free(self.output_sum_prefix);
 				allocator.free(self.output_count_prefix);

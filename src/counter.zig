@@ -50,7 +50,7 @@ pub fn Counter(comptime V: type) type {
 			count: V,
 			preamble: []const u8,
 
-			fn init(comptime name: []const u8, comptime opts: Opts) Impl {
+			pub fn init(comptime name: []const u8, comptime opts: Opts) Impl {
 				return .{
 					.count = 0,
 					.preamble = comptime m.preamble(name, .counter, true, opts.help),
@@ -133,12 +133,12 @@ pub fn CounterVec(comptime V: type, comptime L: type) type {
 			lock: std.Thread.RwLock,
 			values: MetricVec(L).HashMap(Value),
 
-			const Value = struct {
+			pub const Value = struct {
 				count: V,
 				attributes: []const u8,
 			};
 
-			fn init(allocator: Allocator, comptime name: []const u8, comptime opts: Opts) !Impl {
+			pub fn init(allocator: Allocator, comptime name: []const u8, comptime opts: Opts) !Impl {
 				return .{
 					.lock = .{},
 					.allocator = allocator,
@@ -148,7 +148,7 @@ pub fn CounterVec(comptime V: type, comptime L: type) type {
 				};
 			}
 
-			fn deinit(self: *Impl) void {
+			pub fn deinit(self: *Impl) void {
 				const allocator = self.allocator;
 
 				var it = self.values.iterator();
