@@ -70,16 +70,16 @@ pub fn Gauge(comptime V: type) type {
 			}
 
 			pub fn incrBy(self: *Impl, value: V) void {
-				_ = @atomicRmw(V, &self.value, .Add, value, .Monotonic);
+				_ = @atomicRmw(V, &self.value, .Add, value, .monotonic);
 			}
 
 			pub fn set(self: *Impl, value: V) void {
-				@atomicStore(V, &self.value, value, .Monotonic);
+				@atomicStore(V, &self.value, value, .monotonic);
 			}
 
 			pub fn write(self: *const Impl, writer: anytype) !void {
 				try writer.writeAll(self.preamble);
-				try m.write(@atomicLoad(V, &self.value, .Monotonic), writer);
+				try m.write(@atomicLoad(V, &self.value, .monotonic), writer);
 				return writer.writeByte('\n');
 			}
 		};

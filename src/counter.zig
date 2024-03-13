@@ -62,12 +62,12 @@ pub fn Counter(comptime V: type) type {
 			}
 
 			pub fn incrBy(self: *Impl, count: V) void {
-				_ = @atomicRmw(V, &self.count, .Add, count, .Monotonic);
+				_ = @atomicRmw(V, &self.count, .Add, count, .monotonic);
 			}
 
 			pub fn write(self: *const Impl, writer: anytype) !void {
 				try writer.writeAll(self.preamble);
-				const count = @atomicLoad(V, &self.count, .Monotonic);
+				const count = @atomicLoad(V, &self.count, .monotonic);
 				try m.write(count, writer);
 				return writer.writeByte('\n');
 			}
@@ -170,7 +170,7 @@ pub fn CounterVec(comptime V: type, comptime L: type) type {
 					self.lock.lockShared();
 					defer self.lock.unlockShared();
 					if (self.values.getPtr(labels)) |existing| {
-						_ = @atomicRmw(V, &existing.count, .Add, count, .Monotonic);
+						_ = @atomicRmw(V, &existing.count, .Add, count, .monotonic);
 						return;
 					}
 				}

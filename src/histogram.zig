@@ -78,8 +78,8 @@ pub fn Histogram(comptime V: type, comptime upper_bounds: []const V) type {
 			}
 
 			pub fn observe(self: *Impl, value: V) void {
-				_ = @atomicRmw(usize, &self.count, .Add, 1, .Monotonic);
-				_ = @atomicRmw(V, &self.sum, .Add, value, .Monotonic);
+				_ = @atomicRmw(usize, &self.count, .Add, 1, .monotonic);
+				_ = @atomicRmw(V, &self.sum, .Add, value, .monotonic);
 
 				const idx = blk: {
 					for (upper_bounds, 0..) |upper, i| {
@@ -92,7 +92,7 @@ pub fn Histogram(comptime V: type, comptime upper_bounds: []const V) type {
 					return;
 				};
 
-				_ = @atomicRmw(V, &self.buckets[idx], .Add, 1, .Monotonic);
+				_ = @atomicRmw(V, &self.buckets[idx], .Add, 1, .monotonic);
 			}
 
 			pub fn write(self: *Impl, writer: anytype) !void {
@@ -100,13 +100,13 @@ pub fn Histogram(comptime V: type, comptime upper_bounds: []const V) type {
 
 				var sum: V = 0;
 				for (self.output_bucket_prefixes, 0..) |prefix, i| {
-					sum += @atomicRmw(V, &self.buckets[i], .Xchg, 0, .Monotonic);
+					sum += @atomicRmw(V, &self.buckets[i], .Xchg, 0, .monotonic);
 					try writer.writeAll(prefix);
 					try m.write(sum, writer);
 					try writer.writeByte('\n');
 				}
 
-				const total_count = @atomicRmw(usize, &self.count, .Xchg, 0, .Monotonic);
+				const total_count = @atomicRmw(usize, &self.count, .Xchg, 0, .monotonic);
 				{
 					// write +Inf
 					try writer.writeAll(self.output_bucket_inf_prefix);
@@ -118,7 +118,7 @@ pub fn Histogram(comptime V: type, comptime upper_bounds: []const V) type {
 					// this includes a leading newline, hence we didn't need to write
 					// it after our output_bucket_inf_prefix
 					try writer.writeAll(self.output_sum_prefix);
-					try m.write(@atomicRmw(V, &self.sum, .Xchg, 0, .Monotonic), writer);
+					try m.write(@atomicRmw(V, &self.sum, .Xchg, 0, .monotonic), writer);
 				}
 
 				{
