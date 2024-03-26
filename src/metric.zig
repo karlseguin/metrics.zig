@@ -182,7 +182,7 @@ pub fn MetricVec(comptime L: type) type {
 pub fn write(value: anytype, writer: anytype) !void {
 	switch (@typeInfo(@TypeOf(value))) {
 		.Int => return std.fmt.formatInt(value, 10, .lower, .{}, writer),
-		.Float => return std.fmt.formatFloatDecimal(value, .{}, writer),
+		.Float => return std.fmt.formatType(value, "d", .{}, writer, 0),
 		else => unreachable, // there are guards that prevent this from being possible
 	}
 }

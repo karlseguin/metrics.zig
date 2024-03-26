@@ -454,7 +454,7 @@ test "Histogram: noop " {
 	try t.expectEqual(0, arr.items.len);
 }
 
-test "Histogram" {
+test "Histogram: simple" {
 	var h = Histogram(f64, &.{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10}).init("hst_1", .{}, .{});
 
 	var i: f64 = 0.001;

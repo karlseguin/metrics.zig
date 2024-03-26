@@ -1,9 +1,20 @@
+// in your build.zig, you can specify a custom test runner:
+// const tests = b.addTest(.{
+//   .target = target,
+//   .optimize = optimize,
+//   .test_runner = "test_runner.zig", // add this line
+//   .root_source_file = .{ .path = "src/main.zig" },
+// });
+
 const std = @import("std");
 const builtin = @import("builtin");
 
 const Allocator = std.mem.Allocator;
 
 const BORDER = "=" ** 80;
+
+// use in custom panic handler
+var current_test: ?[]const u8 = null;
 
 pub fn main() !void {
 	var mem: [4096]u8 = undefined;
@@ -30,21 +41,33 @@ pub fn main() !void {
 		var status = Status.pass;
 		slowest.startTiming();
 
-		const is_unnamed_test = std.mem.eql(u8, "test_0", t.name);
+		const is_unnamed_test = std.mem.endsWith(u8, t.name, ".test_0");
 		if (env.filter) |f| {
 			if (!is_unnamed_test and std.mem.indexOf(u8, t.name, f) == null) {
 				continue;
 			}
 		}
 
+		const friendly_name = blk: {
+			const name = t.name;
+			var it = std.mem.splitScalar(u8, name, '.');
+			while (it.next()) |value| {
+				if (std.mem.eql(u8, value, "test")) {
+					const rest = it.rest();
+					break :blk if (rest.len > 0) rest else name;
+					}
+			}
+			break :blk name;
+		};
 
+		current_test = friendly_name;
 		const result = t.func();
+		current_test = null;
+
 		if (is_unnamed_test) {
 			continue;
 		}
 
-		// strip out the test. prefix
-		const friendly_name = t.name[5..];
 		const ns_taken = slowest.endTiming(friendly_name);
 
 		if (std.testing.allocator_instance.deinit() == .leak) {
@@ -92,7 +115,7 @@ pub fn main() !void {
 	printer.fmt("\n", .{});
 	try slowest.display(printer);
 	printer.fmt("\n", .{});
-	std.os.exit(if (fail == 0) 0 else 1);
+	std.posix.exit(if (fail == 0) 0 else 1);
 }
 
 const Printer = struct {
@@ -211,7 +234,7 @@ const Env = struct {
 
 	fn init(allocator: Allocator) Env {
 		return .{
-			.verbose = readEnvBool(allocator, "TEST_VERBOSE", false),
+			.verbose = readEnvBool(allocator, "TEST_VERBOSE", true),
 			.fail_first = readEnvBool(allocator, "TEST_FAIL_FIRST", false),
 			.filter = readEnv(allocator, "TEST_FILTER"),
 		};
@@ -240,3 +263,10 @@ const Env = struct {
 		return std.ascii.eqlIgnoreCase(value, "true");
 	}
 };
+
+pub fn panic(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace, ret_addr: ?usize) noreturn {
+	if (current_test) |ct| {
+		std.debug.print("\x1b[31m{s}\npanic running \"{s}\"\n{s}\x1b[0m\n", .{BORDER, ct, BORDER});
+	}
+	std.builtin.default_panic(msg, error_return_trace, ret_addr);
+}
