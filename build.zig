@@ -5,14 +5,14 @@ pub fn build(b: *std.Build) !void {
 	const optimize = b.standardOptimizeOption(.{});
 
 	const metrics_module = b.addModule("metrics", .{
-		.root_source_file = .{ .path = "src/metrics.zig" },
+		.root_source_file = b.path("src/metrics.zig"),
 	});
 
 	{
 		// setup example
 		const example = b.addExecutable(.{
 			.name = "metrics demo",
-			.root_source_file = .{ .path = "example/main.zig" },
+			.root_source_file = b.path("example/main.zig"),
 			.target = target,
 			.optimize = optimize,
 		});
@@ -31,10 +31,10 @@ pub fn build(b: *std.Build) !void {
 	{
 		// setup tests
 		const lib_test = b.addTest(.{
-			.root_source_file = .{ .path = "src/metrics.zig" },
+			.root_source_file = b.path("src/metrics.zig"),
 			.target = target,
 			.optimize = optimize,
-			.test_runner = .{.path = "test_runner.zig"},
+			.test_runner = b.path("test_runner.zig"),
 		});
 		const run_test = b.addRunArtifact(lib_test);
 		run_test.has_side_effects = true;
