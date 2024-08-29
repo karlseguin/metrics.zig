@@ -284,7 +284,7 @@ pub fn GaugeVec(comptime V: type, comptime L: type) type {
 
 fn assertGaugeType(comptime T: type) void {
 	switch (@typeInfo(T)) {
-		.Float, .Int => return,
+		.float, .int => return,
 		else => {},
 	}
 	@compileError("Gauge metric must be an integer or float, got: " ++ @typeName(T));

@@ -1,4 +1,4 @@
-const std = @import("std");
+	const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const m = @import("metric.zig");
@@ -238,8 +238,8 @@ pub fn CounterVec(comptime V: type, comptime L: type) type {
 
 fn assertCounterType(comptime T: type) void {
 	switch (@typeInfo(T)) {
-		.Float => return,
-		.Int => |int| {
+		.float => return,
+		.int => |int| {
 			if (int.signedness == .unsigned) return;
 		},
 		else => {},
