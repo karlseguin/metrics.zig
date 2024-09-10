@@ -13,24 +13,22 @@ const m = @import("metrics");
 const lib = @import("lib/lib.zig");
 
 pub fn main() !void {
-	var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-	const allocator = gpa.allocator();
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const allocator = gpa.allocator();
 
-	// The application initializes the metrics for all the libraries it wishes
-	// to get metrics from. Optionally, the application can force a metric
-	// name prefix and can exclude specific metrics
-	try lib.initializeMetrics(allocator, .{
-		.prefix = "",    // default to ""
-		.exclude = null, // defaults to null
-	});
+    // The application initializes the metrics for all the libraries it wishes
+    // to get metrics from. Optionally, the application can force a metric
+    // name prefix and can exclude specific metrics
+    try lib.initializeMetrics(allocator, .{
+        .prefix = "", // default to ""
+        .exclude = null, // defaults to null
+    });
 
-	// this will use some of the libraries metrics
-	try lib.doSomething();
+    // this will use some of the libraries metrics
+    try lib.doSomething();
 
-	// the application can output the library metric to a writer
-	const writer = std.io.getStdOut().writer();
-	try lib.writeMetrics(writer);
-	// try anotherLib.writeMetrics(writer);
+    // the application can output the library metric to a writer
+    const writer = std.io.getStdOut().writer();
+    try lib.writeMetrics(writer);
+    // try anotherLib.writeMetrics(writer);
 }
-
-
