@@ -420,8 +420,8 @@ pub fn HistogramVec(comptime V: type, comptime L: type, comptime upper_bounds: [
 
 fn assertHistogramType(comptime T: type) void {
     switch (@typeInfo(T)) {
-        .float => return,
-        .int => |int| {
+        .Float => return,
+        .Int => |int| {
             if (int.signedness == .unsigned) return;
         },
         else => {},

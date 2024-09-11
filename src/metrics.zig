@@ -24,11 +24,11 @@ pub const RegistryOpts = @import("registry.zig").Opts;
 // noop.
 pub fn initializeNoop(comptime T: type) T {
     switch (@typeInfo(T)) {
-        .@"struct" => |struct_info| {
+        .Struct => |struct_info| {
             var m: T = undefined;
             inline for (struct_info.fields) |field| {
                 switch (@typeInfo(field.type)) {
-                    .@"union" => @field(m, field.name) = .{ .noop = {} },
+                    .Union => @field(m, field.name) = .{ .noop = {} },
                     else => {
                         if (field.default_value) |default_value_ptr| {
                             const default_value = @as(*align(1) const field.type, @ptrCast(default_value_ptr)).*;
@@ -44,12 +44,12 @@ pub fn initializeNoop(comptime T: type) T {
 }
 
 pub fn write(metrics: anytype, writer: anytype) !void {
-    const S = @typeInfo(@TypeOf(metrics)).pointer.child;
-    const fields = @typeInfo(S).@"struct".fields;
+    const S = @typeInfo(@TypeOf(metrics)).Pointer.child;
+    const fields = @typeInfo(S).Struct.fields;
 
     inline for (fields) |f| {
         switch (@typeInfo(f.type)) {
-            .@"union" => try @constCast(&@field(metrics, f.name)).write(writer),
+            .Union => try @constCast(&@field(metrics, f.name)).write(writer),
             else => {},
         }
     }

@@ -16,11 +16,11 @@ const MetricType = enum {
 // is, label handling is the same).
 pub fn MetricVec(comptime L: type) type {
     const ti = @typeInfo(L);
-    if (std.meta.activeTag(ti) != .@"struct") {
+    if (std.meta.activeTag(ti) != .Struct) {
         @compileError("Vec type must be a struct, got: " ++ @typeName(L));
     }
 
-    const fields = ti.@"struct".fields;
+    const fields = ti.Struct.fields;
     inline for (fields) |f| {
         validateLabel(f.name, f.type);
     }
@@ -86,7 +86,7 @@ pub fn MetricVec(comptime L: type) type {
             var owned: L = undefined;
             inline for (fields) |f| {
                 switch (@typeInfo(f.type)) {
-                    .pointer => @field(owned, f.name) = try allocator.dupe(u8, @field(value, f.name)),
+                    .Pointer => @field(owned, f.name) = try allocator.dupe(u8, @field(value, f.name)),
                     else => @field(owned, f.name) = @field(value, f.name), // all other fields are primitives
                 }
             }
@@ -97,7 +97,7 @@ pub fn MetricVec(comptime L: type) type {
         pub fn free(allocator: Allocator, value: L) void {
             inline for (fields) |f| {
                 switch (@typeInfo(f.type)) {
-                    .pointer => allocator.free(@field(value, f.name)),
+                    .Pointer => allocator.free(@field(value, f.name)),
                     else => {}, // all other fields are primitives
                 }
             }
@@ -181,8 +181,8 @@ pub fn MetricVec(comptime L: type) type {
 // Writes value to writer. Value can either be an integer or float.
 pub fn write(value: anytype, writer: anytype) !void {
     switch (@typeInfo(@TypeOf(value))) {
-        .int => return std.fmt.formatInt(value, 10, .lower, .{}, writer),
-        .float => return std.fmt.formatType(value, "d", .{}, writer, 0),
+        .Int => return std.fmt.formatInt(value, 10, .lower, .{}, writer),
+        .Float => return std.fmt.formatType(value, "d", .{}, writer, 0),
         else => unreachable, // there are guards that prevent this from being possible
     }
 }
@@ -235,8 +235,8 @@ fn validateLabel(comptime name: []const u8, comptime T: type) void {
     }
 
     switch (@typeInfo(T)) {
-        .error_set, .@"enum", .type, .bool, .int => return,
-        .pointer => |ptr| {
+        .ErrorSet, .Enum, .Type, .Bool, .Int => return,
+        .Pointer => |ptr| {
             switch (ptr.size) {
                 .Slice => {
                     if (ptr.child == u8) {
@@ -254,15 +254,15 @@ fn validateLabel(comptime name: []const u8, comptime T: type) void {
 // attribite value => text
 fn serializeValue(allocator: Allocator, value: anytype) !SerializedValue {
     switch (@typeInfo(@TypeOf(value))) {
-        .int => {
+        .Int => {
             const digits = numberOfDigits(value);
             const buf = try allocator.alloc(u8, digits);
             const l = std.fmt.formatIntBuf(buf, value, 10, .lower, .{});
             std.debug.assert(l == digits);
             return .{ .str = buf, .allocated = true };
         },
-        .bool => return .{ .str = if (value) "true" else "false" },
-        .pointer => {
+        .Bool => return .{ .str = if (value) "true" else "false" },
+        .Pointer => {
             // validateLabel would only allow a []u8, so if we're here, it has to be a []u8
             // but the value might need to be escaped,
             var escape_count: usize = 0;
@@ -299,9 +299,9 @@ fn serializeValue(allocator: Allocator, value: anytype) !SerializedValue {
             }
             return .{ .str = escaped, .allocated = true };
         },
-        .type => return .{ .str = @typeName(value) },
-        .@"enum" => return .{ .str = @tagName(value) },
-        .error_set => return .{ .str = @errorName(value) },
+        .Type => return .{ .str = @typeName(value) },
+        .Enum => return .{ .str = @tagName(value) },
+        .ErrorSet => return .{ .str = @errorName(value) },
         else => unreachable,
     }
 }
@@ -334,7 +334,7 @@ fn HashContext(comptime K: type) type {
     return struct {
         const Self = @This();
 
-        const fields = @typeInfo(K).@"struct".fields;
+        const fields = @typeInfo(K).Struct.fields;
 
         pub fn hash(_: Self, key: K) u64 {
             var hasher = Wyhash.init(0);
@@ -350,7 +350,7 @@ fn HashContext(comptime K: type) type {
                 const value_a = @field(a, field.name);
                 const value_b = @field(b, field.name);
                 switch (@typeInfo(@TypeOf(value_a))) {
-                    .pointer => if (std.mem.eql(u8, value_a, value_b) == false) return false,
+                    .Pointer => if (std.mem.eql(u8, value_a, value_b) == false) return false,
                     else => if (value_a != value_b) return false,
                 }
             }
@@ -363,8 +363,8 @@ fn HashContext(comptime K: type) type {
         fn hashValue(hasher: *Wyhash, value: anytype) void {
             const V = @TypeOf(value);
             switch (@typeInfo(V)) {
-                .int => |int| switch (int.signedness) {
-                    .signed => hashValue(hasher, @as(@Type(.{ .int = .{
+                .Int => |int| switch (int.signedness) {
+                    .signed => hashValue(hasher, @as(@Type(.{ .Int = .{
                         .bits = int.bits,
                         .signedness = .unsigned,
                     } }), @bitCast(value))),
@@ -377,11 +377,11 @@ fn HashContext(comptime K: type) type {
                         }
                     },
                 },
-                .@"enum" => hashValue(hasher, @intFromEnum(value)),
-                .error_set => hashValue(hasher, @intFromError(value)),
-                .bool => hasher.update(if (value) &.{1} else &.{0}),
-                .pointer => hasher.update(value), // validateLabelType ensures this was a []u8
-                .type => hasher.update(@typeName(value)),
+                .Enum => hashValue(hasher, @intFromEnum(value)),
+                .ErrorSet => hashValue(hasher, @intFromError(value)),
+                .Bool => hasher.update(if (value) &.{1} else &.{0}),
+                .Pointer => hasher.update(value), // validateLabelType ensures this was a []u8
+                .Type => hasher.update(@typeName(value)),
                 else => unreachable, // validateLabelType only allows the above types
             }
         }

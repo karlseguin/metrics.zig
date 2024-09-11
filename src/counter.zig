@@ -238,8 +238,8 @@ pub fn CounterVec(comptime V: type, comptime L: type) type {
 
 fn assertCounterType(comptime T: type) void {
     switch (@typeInfo(T)) {
-        .float => return,
-        .int => |int| {
+        .Float => return,
+        .Int => |int| {
             if (int.signedness == .unsigned) return;
         },
         else => {},
