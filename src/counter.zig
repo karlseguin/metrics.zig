@@ -197,6 +197,7 @@ pub fn CounterVec(comptime V: type, comptime L: type) type {
                     MetricVec(L).free(allocator, owned_labels);
                     allocator.free(attributes);
                     gop.value_ptr.count += count;
+                    return;
                 }
 
                 gop.value_ptr.* = counter;
@@ -405,4 +406,35 @@ test "CounterVec: float incr/incrBy + write" {
     try c.incrBy(.{ .id = "a" }, 0.25);
     try c.write(arr.writer());
     try t.expectString(preamble ++ "counter_vec_xx_2{id=\"b\"} 1\ncounter_vec_xx_2{id=\"a\"} 2.25\n", arr.items);
+}
+
+test "Counter: concurrent create" {
+    const EquitiesCounter = CounterVec(u64, struct {
+        symbol: []const u8,
+        type: []const u8,
+    });
+
+    const preamble = "# TYPE counter_vec_concurrent counter\n";
+
+    const run = struct {
+        fn run(c: *EquitiesCounter) void {
+            c.incrBy(.{ .symbol = "AAPL", .type = "trade" }, 1) catch {};
+        }
+    }.run;
+
+    for (1..100) |_| {
+        var arr = std.ArrayList(u8).init(t.allocator);
+        defer arr.deinit();
+
+        var c = try EquitiesCounter.init(t.allocator, "counter_vec_concurrent", .{}, .{});
+        defer c.deinit();
+
+        var th1 = try std.Thread.spawn(.{}, run, .{&c});
+        var th2 = try std.Thread.spawn(.{}, run, .{&c});
+        th2.join();
+        th1.join();
+
+        try c.write(arr.writer());
+        try t.expectString(preamble ++ "counter_vec_concurrent{symbol=\"AAPL\",type=\"trade\"} 2\n", arr.items);
+    }
 }

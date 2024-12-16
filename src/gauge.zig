@@ -275,6 +275,7 @@ pub fn GaugeVec(comptime V: type, comptime L: type) type {
                     MetricVec(L).free(allocator, owned_labels);
                     allocator.free(attributes);
                     f(value, gop.value_ptr);
+                    return;
                 }
                 gop.value_ptr.* = gauge;
             }
@@ -458,4 +459,35 @@ test "GaugeVec: float incr/incrBy/set + write" {
     g.remove(.{ .id = "c\nc" });
     try g.write(arr.writer());
     try t.expectString(preamble ++ "gauge_vec_xx_2{id=\"b\"} 1\ngauge_vec_xx_2{id=\"a\"} 2.25\n", arr.items);
+}
+
+test "Gauge: concurrent create" {
+    const EquitiesGauge = GaugeVec(u64, struct {
+        symbol: []const u8,
+        type: []const u8,
+    });
+
+    const preamble = "# TYPE gauge_vec_concurrent gauge\n";
+
+    const run = struct {
+        fn run(c: *EquitiesGauge) void {
+            c.set(.{ .symbol = "AAPL", .type = "trade" }, 1) catch {};
+        }
+    }.run;
+
+    for (0..100) |_| {
+        var arr = std.ArrayList(u8).init(t.allocator);
+        defer arr.deinit();
+
+        var c = try EquitiesGauge.init(t.allocator, "gauge_vec_concurrent", .{}, .{});
+        defer c.deinit();
+
+        var th1 = try std.Thread.spawn(.{}, run, .{&c});
+        var th2 = try std.Thread.spawn(.{}, run, .{&c});
+        th2.join();
+        th1.join();
+
+        try c.write(arr.writer());
+        try t.expectString(preamble ++ "gauge_vec_concurrent{symbol=\"AAPL\",type=\"trade\"} 1\n", arr.items);
+    }
 }
