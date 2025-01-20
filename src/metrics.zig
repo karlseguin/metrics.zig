@@ -30,7 +30,7 @@ pub fn initializeNoop(comptime T: type) T {
                 switch (@typeInfo(field.type)) {
                     .@"union" => @field(m, field.name) = .{ .noop = {} },
                     else => {
-                        if (field.default_value) |default_value_ptr| {
+                        if (field.default_value_ptr) |default_value_ptr| {
                             const default_value = @as(*align(1) const field.type, @ptrCast(default_value_ptr)).*;
                             @field(m, field.name) = default_value;
                         }

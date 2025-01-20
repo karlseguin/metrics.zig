@@ -238,7 +238,7 @@ fn validateLabel(comptime name: []const u8, comptime T: type) void {
         .error_set, .@"enum", .type, .bool, .int => return,
         .pointer => |ptr| {
             switch (ptr.size) {
-                .Slice => {
+                .slice => {
                     if (ptr.child == u8) {
                         return;
                     }
