@@ -302,9 +302,8 @@ test "Gauge: noop incr/incrBy/set" {
     var writer: std.io.Writer.Allocating = .init(t.allocator);
     defer writer.deinit();
     try c.write(&writer.writer);
-    var arr = writer.toArrayList();
-    defer arr.deinit(t.allocator);
-    try t.expectEqual(0, arr.items.len);
+    const buf = writer.writer.buffered();
+    try t.expectEqual(0, buf.len);
 }
 
 test "Gauge: incr/incrBy/set" {
@@ -332,27 +331,24 @@ test "Gauge: write" {
     {
         g.incr();
         try g.write(&writer.writer);
-        var arr = writer.toArrayList();
-        defer arr.deinit(t.allocator);
-        try t.expectString("# TYPE metric_grp_1_x gauge\nmetric_grp_1_x 1\n", arr.items);
+        const buf = writer.writer.buffered();
+        try t.expectString("# TYPE metric_grp_1_x gauge\nmetric_grp_1_x 1\n", buf);
     }
 
     {
         writer.clearRetainingCapacity();
         g.incrBy(399929123);
         try g.write(&writer.writer);
-        var arr = writer.toArrayList();
-        defer arr.deinit(t.allocator);
-        try t.expectString("# TYPE metric_grp_1_x gauge\nmetric_grp_1_x 399929124\n", arr.items);
+        const buf = writer.writer.buffered();
+        try t.expectString("# TYPE metric_grp_1_x gauge\nmetric_grp_1_x 399929124\n", buf);
     }
 
     {
         writer.clearRetainingCapacity();
         g.set(-329);
         try g.write(&writer.writer);
-        var arr = writer.toArrayList();
-        defer arr.deinit(t.allocator);
-        try t.expectString("# TYPE metric_grp_1_x gauge\nmetric_grp_1_x -329\n", arr.items);
+        const buf = writer.writer.buffered();
+        try t.expectString("# TYPE metric_grp_1_x gauge\nmetric_grp_1_x -329\n", buf);
     }
 }
 
@@ -375,27 +371,24 @@ test "Gauge: float write" {
     {
         c.incr();
         try c.write(&writer.writer);
-        var arr = writer.toArrayList();
-        defer arr.deinit(t.allocator);
-        try t.expectString("# TYPE metric_g_2_x gauge\nmetric_g_2_x 1\n", arr.items);
+        const buf = writer.writer.buffered();
+        try t.expectString("# TYPE metric_g_2_x gauge\nmetric_g_2_x 1\n", buf);
     }
 
     {
         writer.clearRetainingCapacity();
         c.incrBy(-9.2);
         try c.write(&writer.writer);
-        var arr = writer.toArrayList();
-        defer arr.deinit(t.allocator);
-        try t.expectString("# TYPE metric_g_2_x gauge\nmetric_g_2_x -8.2\n", arr.items);
+        const buf = writer.writer.buffered();
+        try t.expectString("# TYPE metric_g_2_x gauge\nmetric_g_2_x -8.2\n", buf);
     }
 
     {
         writer.clearRetainingCapacity();
         c.set(8.888);
         try c.write(&writer.writer);
-        var arr = writer.toArrayList();
-        defer arr.deinit(t.allocator);
-        try t.expectString("# TYPE metric_g_2_x gauge\nmetric_g_2_x 8.888\n", arr.items);
+        const buf = writer.writer.buffered();
+        try t.expectString("# TYPE metric_g_2_x gauge\nmetric_g_2_x 8.888\n", buf);
     }
 }
 
@@ -410,9 +403,8 @@ test "GaugeVec: noop incr/incrBy/set" {
     var writer: std.io.Writer.Allocating = .init(t.allocator);
     defer writer.deinit();
     try g.write(&writer.writer);
-    var arr = writer.toArrayList();
-    defer arr.deinit(t.allocator);
-    try t.expectEqual(0, arr.items.len);
+    const buf = writer.writer.buffered();
+    try t.expectEqual(0, buf.len);
 }
 
 test "GaugeVec: incr/incrBy/set + write" {
@@ -428,9 +420,8 @@ test "GaugeVec: incr/incrBy/set + write" {
     {
         try g.incr(.{ .id = "a" });
         try g.write(&writer.writer);
-        var arr = writer.toArrayList();
-        defer arr.deinit(t.allocator);
-        try t.expectString(preamble ++ "gauge_vec_1{id=\"a\"} 1\n", arr.items);
+        const buf = writer.writer.buffered();
+        try t.expectString(preamble ++ "gauge_vec_1{id=\"a\"} 1\n", buf);
     }
 
     {
@@ -438,9 +429,8 @@ test "GaugeVec: incr/incrBy/set + write" {
         try g.incr(.{ .id = "b" });
         try g.incr(.{ .id = "a" });
         try g.write(&writer.writer);
-        var arr = writer.toArrayList();
-        defer arr.deinit(t.allocator);
-        try t.expectString(preamble ++ "gauge_vec_1{id=\"b\"} 1\ngauge_vec_1{id=\"a\"} 2\n", arr.items);
+        const buf = writer.writer.buffered();
+        try t.expectString(preamble ++ "gauge_vec_1{id=\"b\"} 1\ngauge_vec_1{id=\"a\"} 2\n", buf);
     }
 
     {
@@ -449,9 +439,8 @@ test "GaugeVec: incr/incrBy/set + write" {
         try g.set(.{ .id = "c" }, 5);
         try g.set(.{ .id = "b" }, -33);
         try g.write(&writer.writer);
-        var arr = writer.toArrayList();
-        defer arr.deinit(t.allocator);
-        try t.expectString(preamble ++ "gauge_vec_1{id=\"b\"} -33\ngauge_vec_1{id=\"a\"} 22\ngauge_vec_1{id=\"c\"} 5\n", arr.items);
+        const buf = writer.writer.buffered();
+        try t.expectString(preamble ++ "gauge_vec_1{id=\"b\"} -33\ngauge_vec_1{id=\"a\"} 22\ngauge_vec_1{id=\"c\"} 5\n", buf);
     }
 
     {
@@ -459,9 +448,8 @@ test "GaugeVec: incr/incrBy/set + write" {
         g.remove(.{ .id = "not_found" });
         g.remove(.{ .id = "a" });
         try g.write(&writer.writer);
-        var arr = writer.toArrayList();
-        defer arr.deinit(t.allocator);
-        try t.expectString(preamble ++ "gauge_vec_1{id=\"b\"} -33\ngauge_vec_1{id=\"c\"} 5\n", arr.items);
+        const buf = writer.writer.buffered();
+        try t.expectString(preamble ++ "gauge_vec_1{id=\"b\"} -33\ngauge_vec_1{id=\"c\"} 5\n", buf);
     }
 }
 
@@ -478,9 +466,8 @@ test "GaugeVec: float incr/incrBy/set + write" {
     {
         try g.incr(.{ .id = "a" });
         try g.write(&writer.writer);
-        var arr = writer.toArrayList();
-        defer arr.deinit(t.allocator);
-        try t.expectString(preamble ++ "gauge_vec_xx_2{id=\"a\"} 1\n", arr.items);
+        const buf = writer.writer.buffered();
+        try t.expectString(preamble ++ "gauge_vec_xx_2{id=\"a\"} 1\n", buf);
     }
 
     {
@@ -489,9 +476,8 @@ test "GaugeVec: float incr/incrBy/set + write" {
         try g.incr(.{ .id = "a" });
         try g.set(.{ .id = "c\nc" }, 0.011);
         try g.write(&writer.writer);
-        var arr = writer.toArrayList();
-        defer arr.deinit(t.allocator);
-        try t.expectString(preamble ++ "gauge_vec_xx_2{id=\"b\"} 1\ngauge_vec_xx_2{id=\"a\"} 2\ngauge_vec_xx_2{id=\"c\\nc\"} 0.011\n", arr.items);
+        const buf = writer.writer.buffered();
+        try t.expectString(preamble ++ "gauge_vec_xx_2{id=\"b\"} 1\ngauge_vec_xx_2{id=\"a\"} 2\ngauge_vec_xx_2{id=\"c\\nc\"} 0.011\n", buf);
     }
 
     {
@@ -499,9 +485,8 @@ test "GaugeVec: float incr/incrBy/set + write" {
         try g.incrBy(.{ .id = "a" }, 0.25);
         g.remove(.{ .id = "c\nc" });
         try g.write(&writer.writer);
-        var arr = writer.toArrayList();
-        defer arr.deinit(t.allocator);
-        try t.expectString(preamble ++ "gauge_vec_xx_2{id=\"b\"} 1\ngauge_vec_xx_2{id=\"a\"} 2.25\n", arr.items);
+        const buf = writer.writer.buffered();
+        try t.expectString(preamble ++ "gauge_vec_xx_2{id=\"b\"} 1\ngauge_vec_xx_2{id=\"a\"} 2.25\n", buf);
     }
 }
 
@@ -532,8 +517,7 @@ test "Gauge: concurrent create" {
         th1.join();
 
         try c.write(&writer.writer);
-        var arr = writer.toArrayList();
-        defer arr.deinit(t.allocator);
-        try t.expectString(preamble ++ "gauge_vec_concurrent{symbol=\"AAPL\",type=\"trade\"} 1\n", arr.items);
+        const buf = writer.writer.buffered();
+        try t.expectString(preamble ++ "gauge_vec_concurrent{symbol=\"AAPL\",type=\"trade\"} 1\n", buf);
     }
 }

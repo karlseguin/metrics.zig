@@ -451,9 +451,8 @@ test "Histogram: noop " {
     var writer: std.io.Writer.Allocating = .init(t.allocator);
     defer writer.deinit();
     try h.write(&writer.writer);
-    var arr = writer.toArrayList();
-    defer arr.deinit(t.allocator);
-    try t.expectEqual(0, arr.items.len);
+    const buf = writer.writer.buffered();
+    try t.expectEqual(0, buf.len);
 }
 
 test "Histogram: simple" {
@@ -470,8 +469,7 @@ test "Histogram: simple" {
 
     {
         try h.write(&writer.writer);
-        var arr = writer.toArrayList();
-        defer arr.deinit(t.allocator);
+        const buf = writer.writer.buffered();
         try t.expectString(
             \\# TYPE hst_1 histogram
             \\hst_1_bucket{le="0.005"} 161
@@ -489,15 +487,14 @@ test "Histogram: simple" {
             \\hst_1_sum 2116.7737194191777
             \\hst_1_count 1000
             \\
-        , arr.items);
+        , buf);
     }
 
     {
         writer.clearRetainingCapacity();
         h.observe(2.8);
         try h.write(&writer.writer);
-        var arr = writer.toArrayList();
-        defer arr.deinit(t.allocator);
+        const buf = writer.writer.buffered();
         try t.expectString(
             \\# TYPE hst_1 histogram
             \\hst_1_bucket{le="0.005"} 0
@@ -515,7 +512,7 @@ test "Histogram: simple" {
             \\hst_1_sum 2.8
             \\hst_1_count 1
             \\
-        , arr.items);
+        , buf);
     }
 }
 
@@ -528,9 +525,8 @@ test "HistogramVec: noop " {
     var writer: std.io.Writer.Allocating = .init(t.allocator);
     defer writer.deinit();
     try h.write(&writer.writer);
-    var arr = writer.toArrayList();
-    defer arr.deinit(t.allocator);
-    try t.expectEqual(0, arr.items.len);
+    const buf = writer.writer.buffered();
+    try t.expectEqual(0, buf.len);
 }
 
 test "HistogramVec" {
@@ -554,8 +550,7 @@ test "HistogramVec" {
 
     {
         try h.write(&writer.writer);
-        var arr = writer.toArrayList();
-        defer arr.deinit(t.allocator);
+        const buf = writer.writer.buffered();
         try t.expectString(
             \\# TYPE hst_1 histogram
             \\hst_1_bucket{le="0.005",status="200"} 161
@@ -587,15 +582,14 @@ test "HistogramVec" {
             \\hst_1_sum{status="400"} 6.369539040617386
             \\hst_1_count{status="400"} 100
             \\
-        , arr.items);
+        , buf);
     }
 
     {
         try h.observe(.{ .status = 200 }, 9);
         writer.clearRetainingCapacity();
         try h.write(&writer.writer);
-        var arr = writer.toArrayList();
-        defer arr.deinit(t.allocator);
+        const buf = writer.writer.buffered();
         try t.expectString(
             \\# TYPE hst_1 histogram
             \\hst_1_bucket{le="0.005",status="200"} 0
@@ -627,6 +621,6 @@ test "HistogramVec" {
             \\hst_1_sum{status="400"} 0
             \\hst_1_count{status="400"} 0
             \\
-        , arr.items);
+        , buf);
     }
 }

@@ -71,9 +71,8 @@ test "initializeNoop + write" {
     var writer: std.io.Writer.Allocating = .init(t.allocator);
     defer writer.deinit();
     try write(&x, &writer.writer);
-    var arr = writer.toArrayList();
-    defer arr.deinit(t.allocator);
-    try t.expectEqual(0, arr.items.len);
+    const buf = writer.writer.buffered();
+    try t.expectEqual(0, buf.len);
 }
 
 test "metrics: write" {
@@ -98,8 +97,7 @@ test "metrics: write" {
 
     {
         try write(&m, &writer.writer);
-        var arr = writer.toArrayList();
-        defer arr.deinit(t.allocator);
+        const buf = writer.writer.buffered();
         try t.expectString(
             \\# TYPE hits counter
             \\hits{status="199"} 1
@@ -108,7 +106,7 @@ test "metrics: write" {
             \\# HELP x_timing the timing
             \\# TYPE x_timing histogram
             \\
-        , arr.items);
+        , buf);
     }
 
     m.active.set(32);
@@ -121,8 +119,7 @@ test "metrics: write" {
     {
         writer.clearRetainingCapacity();
         try write(&m, &writer.writer);
-        var arr = writer.toArrayList();
-        defer arr.deinit(t.allocator);
+        const buf = writer.writer.buffered();
         try t.expectString(
             \\# TYPE hits counter
             \\hits{status="3"} 1
@@ -154,6 +151,6 @@ test "metrics: write" {
             \\x_timing_sum{path="/a"} 10
             \\x_timing_count{path="/a"} 2
             \\
-        , arr.items);
+        , buf);
     }
 }
