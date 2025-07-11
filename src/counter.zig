@@ -39,7 +39,7 @@ pub fn Counter(comptime V: type) type {
             }
         }
 
-        pub fn write(self: *Self, writer: anytype) !void {
+        pub fn write(self: *Self, writer: *std.io.Writer) !void {
             switch (self.*) {
                 .noop => {},
                 .impl => |*impl| return impl.write(writer),
@@ -65,7 +65,7 @@ pub fn Counter(comptime V: type) type {
                 _ = @atomicRmw(V, &self.count, .Add, count, .monotonic);
             }
 
-            pub fn write(self: *const Impl, writer: anytype) !void {
+            pub fn write(self: *const Impl, writer: *std.io.Writer) !void {
                 try writer.writeAll(self.preamble);
                 const count = @atomicLoad(V, &self.count, .monotonic);
                 try m.write(count, writer);
@@ -119,7 +119,7 @@ pub fn CounterVec(comptime V: type, comptime L: type) type {
             }
         }
 
-        pub fn write(self: *Self, writer: anytype) !void {
+        pub fn write(self: *Self, writer: *std.io.Writer) !void {
             switch (self.*) {
                 .noop => {},
                 .impl => |*impl| return impl.write(writer),
@@ -215,7 +215,7 @@ pub fn CounterVec(comptime V: type, comptime L: type) type {
                 allocator.free(kv.value.attributes);
             }
 
-            pub fn write(self: *Impl, writer: anytype) !void {
+            pub fn write(self: *Impl, writer: *std.io.Writer) !void {
                 try writer.writeAll(self.preamble);
 
                 const name = self.vec.name;
@@ -255,10 +255,10 @@ test "Counter: noop incr/incrBy" {
     c.incr();
     c.incrBy(10);
 
-    var arr = std.ArrayList(u8).init(t.allocator);
-    defer arr.deinit();
-    try c.write(arr.writer());
-    try t.expectEqual(0, arr.items.len);
+    var writer: std.io.Writer.Allocating = .init(t.allocator);
+    defer writer.deinit();
+    try c.write(&writer.writer);
+    try t.expectEqual(0, writer.writer.end);
 }
 
 test "Counter: incr/incrBy" {
@@ -270,21 +270,25 @@ test "Counter: incr/incrBy" {
 }
 
 test "Counter: write" {
-    var arr = std.ArrayList(u8).init(t.allocator);
-    defer arr.deinit();
+    var writer: std.io.Writer.Allocating = .init(t.allocator);
+    defer writer.deinit();
 
     var c = Counter(u32).init("metric_cnt_1_x", .{}, .{ .exclude = &.{"t_ex"} });
 
     {
         c.incr();
-        try c.write(arr.writer());
+        try c.write(&writer.writer);
+        var arr = writer.toArrayList();
+        defer arr.deinit(t.allocator);
         try t.expectString("# TYPE metric_cnt_1_x counter\nmetric_cnt_1_x 1\n", arr.items);
     }
 
     {
-        arr.clearRetainingCapacity();
+        writer.clearRetainingCapacity();
         c.incrBy(399929123);
-        try c.write(arr.writer());
+        try c.write(&writer.writer);
+        var arr = writer.toArrayList();
+        defer arr.deinit(t.allocator);
         try t.expectString("# TYPE metric_cnt_1_x counter\nmetric_cnt_1_x 399929124\n", arr.items);
     }
 }
@@ -293,19 +297,21 @@ test "Counter: exclude" {
     var c = Counter(u32).init("t_ex", .{}, .{ .exclude = &.{"t_ex"} });
     c.incr();
 
-    var arr = std.ArrayList(u8).init(t.allocator);
-    defer arr.deinit();
-    try c.write(arr.writer());
-    try t.expectEqual(0, arr.items.len);
+    var writer: std.io.Writer.Allocating = .init(t.allocator);
+    defer writer.deinit();
+    try c.write(&writer.writer);
+    try t.expectEqual(0, writer.writer.end);
 }
 
 test "Counter: prefix" {
     var c = Counter(u32).init("t1_p", .{}, .{ .prefix = "hello_" });
     c.incr();
 
-    var arr = std.ArrayList(u8).init(t.allocator);
-    defer arr.deinit();
-    try c.write(arr.writer());
+    var writer: std.io.Writer.Allocating = .init(t.allocator);
+    defer writer.deinit();
+    try c.write(&writer.writer);
+    var arr = writer.toArrayList();
+    defer arr.deinit(t.allocator);
     try t.expectString("# TYPE hello_t1_p counter\nhello_t1_p 1\n", arr.items);
 }
 
@@ -318,21 +324,27 @@ test "Counter: float incr/incrBy" {
 }
 
 test "Counter: float write" {
-    var arr = std.ArrayList(u8).init(t.allocator);
-    defer arr.deinit();
+    var writer: std.io.Writer.Allocating = .init(
+        t.allocator,
+    );
+    defer writer.deinit();
 
     var c = Counter(f64).init("metric_cnt_2_x", .{}, .{});
 
     {
         c.incr();
-        try c.write(arr.writer());
+        try c.write(&writer.writer);
+        var arr = writer.toArrayList();
+        defer arr.deinit(t.allocator);
         try t.expectString("# TYPE metric_cnt_2_x counter\nmetric_cnt_2_x 1\n", arr.items);
     }
 
     {
-        arr.clearRetainingCapacity();
+        writer.clearRetainingCapacity();
         c.incrBy(123.991);
-        try c.write(arr.writer());
+        try c.write(&writer.writer);
+        var arr = writer.toArrayList();
+        defer arr.deinit(t.allocator);
         try t.expectString("# TYPE metric_cnt_2_x counter\nmetric_cnt_2_x 124.991\n", arr.items);
     }
 }
@@ -344,15 +356,17 @@ test "CounterVec: noop incr/incrBy" {
     try c.incr(.{ .id = 3 });
     try c.incrBy(.{ .id = 10 }, 20);
 
-    var arr = std.ArrayList(u8).init(t.allocator);
-    defer arr.deinit();
-    try c.write(arr.writer());
+    var writer: std.io.Writer.Allocating = .init(t.allocator);
+    defer writer.deinit();
+    try c.write(&writer.writer);
+    var arr = writer.toArrayList();
+    defer arr.deinit(t.allocator);
     try t.expectEqual(0, arr.items.len);
 }
 
 test "CounterVec: incr/incrBy + write" {
-    var arr = std.ArrayList(u8).init(t.allocator);
-    defer arr.deinit();
+    var writer: std.io.Writer.Allocating = .init(t.allocator);
+    defer writer.deinit();
 
     const preamble = "# HELP counter_vec_1 h1\n# TYPE counter_vec_1 counter\n";
 
@@ -360,31 +374,47 @@ test "CounterVec: incr/incrBy + write" {
     var c = try CounterVec(u64, struct { id: []const u8 }).init(t.allocator, "counter_vec_1", .{ .help = "h1" }, .{});
     defer c.deinit();
 
-    try c.incr(.{ .id = "a" });
-    try c.write(arr.writer());
-    try t.expectString(preamble ++ "counter_vec_1{id=\"a\"} 1\n", arr.items);
+    {
+        try c.incr(.{ .id = "a" });
+        try c.write(&writer.writer);
+        var arr = writer.toArrayList();
+        defer arr.deinit(t.allocator);
+        try t.expectString(preamble ++ "counter_vec_1{id=\"a\"} 1\n", arr.items);
+    }
 
-    arr.clearRetainingCapacity();
-    try c.incr(.{ .id = "b" });
-    try c.incr(.{ .id = "a" });
-    try c.write(arr.writer());
-    try t.expectString(preamble ++ "counter_vec_1{id=\"b\"} 1\ncounter_vec_1{id=\"a\"} 2\n", arr.items);
+    {
+        writer.clearRetainingCapacity();
+        try c.incr(.{ .id = "b" });
+        try c.incr(.{ .id = "a" });
+        try c.write(&writer.writer);
+        var arr = writer.toArrayList();
+        defer arr.deinit(t.allocator);
+        try t.expectString(preamble ++ "counter_vec_1{id=\"b\"} 1\ncounter_vec_1{id=\"a\"} 2\n", arr.items);
+    }
 
-    arr.clearRetainingCapacity();
-    try c.incrBy(.{ .id = "a" }, 20);
-    try c.write(arr.writer());
-    try t.expectString(preamble ++ "counter_vec_1{id=\"b\"} 1\ncounter_vec_1{id=\"a\"} 22\n", arr.items);
+    {
+        writer.clearRetainingCapacity();
+        try c.incrBy(.{ .id = "a" }, 20);
+        try c.write(&writer.writer);
+        var arr = writer.toArrayList();
+        defer arr.deinit(t.allocator);
+        try t.expectString(preamble ++ "counter_vec_1{id=\"b\"} 1\ncounter_vec_1{id=\"a\"} 22\n", arr.items);
+    }
 
-    arr.clearRetainingCapacity();
-    c.remove(.{ .id = "not_found" });
-    c.remove(.{ .id = "a" });
-    try c.write(arr.writer());
-    try t.expectString(preamble ++ "counter_vec_1{id=\"b\"} 1\n", arr.items);
+    {
+        writer.clearRetainingCapacity();
+        c.remove(.{ .id = "not_found" });
+        c.remove(.{ .id = "a" });
+        try c.write(&writer.writer);
+        var arr = writer.toArrayList();
+        defer arr.deinit(t.allocator);
+        try t.expectString(preamble ++ "counter_vec_1{id=\"b\"} 1\n", arr.items);
+    }
 }
 
 test "CounterVec: float incr/incrBy + write" {
-    var arr = std.ArrayList(u8).init(t.allocator);
-    defer arr.deinit();
+    var writer: std.io.Writer.Allocating = .init(t.allocator);
+    defer writer.deinit();
 
     const preamble = "# HELP counter_vec_xx_2 h1\n# TYPE counter_vec_xx_2 counter\n";
 
@@ -392,20 +422,32 @@ test "CounterVec: float incr/incrBy + write" {
     var c = try CounterVec(f32, struct { id: []const u8 }).init(t.allocator, "counter_vec_xx_2", .{ .help = "h1" }, .{});
     defer c.deinit();
 
-    try c.incr(.{ .id = "a" });
-    try c.write(arr.writer());
-    try t.expectString(preamble ++ "counter_vec_xx_2{id=\"a\"} 1\n", arr.items);
+    {
+        try c.incr(.{ .id = "a" });
+        try c.write(&writer.writer);
+        var arr = writer.toArrayList();
+        defer arr.deinit(t.allocator);
+        try t.expectString(preamble ++ "counter_vec_xx_2{id=\"a\"} 1\n", arr.items);
+    }
 
-    arr.clearRetainingCapacity();
-    try c.incr(.{ .id = "b" });
-    try c.incr(.{ .id = "a" });
-    try c.write(arr.writer());
-    try t.expectString(preamble ++ "counter_vec_xx_2{id=\"b\"} 1\ncounter_vec_xx_2{id=\"a\"} 2\n", arr.items);
+    {
+        writer.clearRetainingCapacity();
+        try c.incr(.{ .id = "b" });
+        try c.incr(.{ .id = "a" });
+        try c.write(&writer.writer);
+        var arr = writer.toArrayList();
+        defer arr.deinit(t.allocator);
+        try t.expectString(preamble ++ "counter_vec_xx_2{id=\"b\"} 1\ncounter_vec_xx_2{id=\"a\"} 2\n", arr.items);
+    }
 
-    arr.clearRetainingCapacity();
-    try c.incrBy(.{ .id = "a" }, 0.25);
-    try c.write(arr.writer());
-    try t.expectString(preamble ++ "counter_vec_xx_2{id=\"b\"} 1\ncounter_vec_xx_2{id=\"a\"} 2.25\n", arr.items);
+    {
+        writer.clearRetainingCapacity();
+        try c.incrBy(.{ .id = "a" }, 0.25);
+        try c.write(&writer.writer);
+        var arr = writer.toArrayList();
+        defer arr.deinit(t.allocator);
+        try t.expectString(preamble ++ "counter_vec_xx_2{id=\"b\"} 1\ncounter_vec_xx_2{id=\"a\"} 2.25\n", arr.items);
+    }
 }
 
 test "Counter: concurrent create" {
@@ -423,8 +465,8 @@ test "Counter: concurrent create" {
     }.run;
 
     for (1..100) |_| {
-        var arr = std.ArrayList(u8).init(t.allocator);
-        defer arr.deinit();
+        var writer: std.io.Writer.Allocating = .init(t.allocator);
+        defer writer.deinit();
 
         var c = try EquitiesCounter.init(t.allocator, "counter_vec_concurrent", .{}, .{});
         defer c.deinit();
@@ -434,7 +476,9 @@ test "Counter: concurrent create" {
         th2.join();
         th1.join();
 
-        try c.write(arr.writer());
+        try c.write(&writer.writer);
+        var arr = writer.toArrayList();
+        defer arr.deinit(t.allocator);
         try t.expectString(preamble ++ "counter_vec_concurrent{symbol=\"AAPL\",type=\"trade\"} 2\n", arr.items);
     }
 }

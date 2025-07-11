@@ -43,7 +43,7 @@ pub fn initializeNoop(comptime T: type) T {
     }
 }
 
-pub fn write(metrics: anytype, writer: anytype) !void {
+pub fn write(metrics: anytype, writer: *std.io.Writer) !void {
     const S = @typeInfo(@TypeOf(metrics)).pointer.child;
     const fields = @typeInfo(S).@"struct".fields;
 
@@ -68,9 +68,11 @@ test "initializeNoop + write" {
         latency: Histogram(u32, &.{ 0, 2 }),
     });
 
-    var arr = std.ArrayList(u8).init(t.allocator);
-    defer arr.deinit();
-    try write(&x, arr.writer());
+    var writer: std.io.Writer.Allocating = .init(t.allocator);
+    defer writer.deinit();
+    try write(&x, &writer.writer);
+    var arr = writer.toArrayList();
+    defer arr.deinit(t.allocator);
     try t.expectEqual(0, arr.items.len);
 }
 
@@ -88,21 +90,26 @@ test "metrics: write" {
     defer m.hits.deinit();
     defer m.timing.deinit();
 
+    var writer: std.io.Writer.Allocating = .init(t.allocator);
+    defer writer.deinit();
+
     m.active.set(919);
     try m.hits.incr(.{ .status = 199 });
 
-    var arr = std.ArrayList(u8).init(t.allocator);
-    defer arr.deinit();
-    try write(&m, arr.writer());
-    try t.expectString(
-        \\# TYPE hits counter
-        \\hits{status="199"} 1
-        \\# TYPE active gauge
-        \\active 919
-        \\# HELP x_timing the timing
-        \\# TYPE x_timing histogram
-        \\
-    , arr.items);
+    {
+        try write(&m, &writer.writer);
+        var arr = writer.toArrayList();
+        defer arr.deinit(t.allocator);
+        try t.expectString(
+            \\# TYPE hits counter
+            \\hits{status="199"} 1
+            \\# TYPE active gauge
+            \\active 919
+            \\# HELP x_timing the timing
+            \\# TYPE x_timing histogram
+            \\
+        , arr.items);
+    }
 
     m.active.set(32);
     try m.hits.incr(.{ .status = 199 });
@@ -111,38 +118,42 @@ test "metrics: write" {
     try m.timing.observe(.{ .path = "/a" }, 8);
     try m.timing.observe(.{ .path = "/b" }, 7);
 
-    arr.clearRetainingCapacity();
-    try write(&m, arr.writer());
-    try t.expectString(
-        \\# TYPE hits counter
-        \\hits{status="3"} 1
-        \\hits{status="199"} 2
-        \\# TYPE active gauge
-        \\active 32
-        \\# HELP x_timing the timing
-        \\# TYPE x_timing histogram
-        \\x_timing_bucket{le="5",path="/b"} 0
-        \\x_timing_bucket{le="10",path="/b"} 1
-        \\x_timing_bucket{le="25",path="/b"} 1
-        \\x_timing_bucket{le="50",path="/b"} 1
-        \\x_timing_bucket{le="100",path="/b"} 1
-        \\x_timing_bucket{le="250",path="/b"} 1
-        \\x_timing_bucket{le="500",path="/b"} 1
-        \\x_timing_bucket{le="1000",path="/b"} 1
-        \\x_timing_bucket{le="+Inf",path="/b"} 1
-        \\x_timing_sum{path="/b"} 7
-        \\x_timing_count{path="/b"} 1
-        \\x_timing_bucket{le="5",path="/a"} 1
-        \\x_timing_bucket{le="10",path="/a"} 2
-        \\x_timing_bucket{le="25",path="/a"} 2
-        \\x_timing_bucket{le="50",path="/a"} 2
-        \\x_timing_bucket{le="100",path="/a"} 2
-        \\x_timing_bucket{le="250",path="/a"} 2
-        \\x_timing_bucket{le="500",path="/a"} 2
-        \\x_timing_bucket{le="1000",path="/a"} 2
-        \\x_timing_bucket{le="+Inf",path="/a"} 2
-        \\x_timing_sum{path="/a"} 10
-        \\x_timing_count{path="/a"} 2
-        \\
-    , arr.items);
+    {
+        writer.clearRetainingCapacity();
+        try write(&m, &writer.writer);
+        var arr = writer.toArrayList();
+        defer arr.deinit(t.allocator);
+        try t.expectString(
+            \\# TYPE hits counter
+            \\hits{status="3"} 1
+            \\hits{status="199"} 2
+            \\# TYPE active gauge
+            \\active 32
+            \\# HELP x_timing the timing
+            \\# TYPE x_timing histogram
+            \\x_timing_bucket{le="5",path="/b"} 0
+            \\x_timing_bucket{le="10",path="/b"} 1
+            \\x_timing_bucket{le="25",path="/b"} 1
+            \\x_timing_bucket{le="50",path="/b"} 1
+            \\x_timing_bucket{le="100",path="/b"} 1
+            \\x_timing_bucket{le="250",path="/b"} 1
+            \\x_timing_bucket{le="500",path="/b"} 1
+            \\x_timing_bucket{le="1000",path="/b"} 1
+            \\x_timing_bucket{le="+Inf",path="/b"} 1
+            \\x_timing_sum{path="/b"} 7
+            \\x_timing_count{path="/b"} 1
+            \\x_timing_bucket{le="5",path="/a"} 1
+            \\x_timing_bucket{le="10",path="/a"} 2
+            \\x_timing_bucket{le="25",path="/a"} 2
+            \\x_timing_bucket{le="50",path="/a"} 2
+            \\x_timing_bucket{le="100",path="/a"} 2
+            \\x_timing_bucket{le="250",path="/a"} 2
+            \\x_timing_bucket{le="500",path="/a"} 2
+            \\x_timing_bucket{le="1000",path="/a"} 2
+            \\x_timing_bucket{le="+Inf",path="/a"} 2
+            \\x_timing_sum{path="/a"} 10
+            \\x_timing_count{path="/a"} 2
+            \\
+        , arr.items);
+    }
 }
