@@ -184,7 +184,7 @@ Creates an initializes metric `T` with `noop` implementation of every metric fie
 
 This method is designed to allow a global "metrics" instance to exist and be safe to use within libraries.
 
-#### `write(metrics: anytype, writer anytype) !void`
+#### `write(metrics: anytype, writer: *std.Io.Writer) !void`
 Calls the `write(writer) !void` method on every metric field within `metrics`.
 
 Library developers are expected to wrap this method in a `writeMetric(writer: *std.io.Writer) !void` function. This function requires a pointer to your metrics.
