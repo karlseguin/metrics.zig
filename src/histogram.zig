@@ -35,7 +35,7 @@ pub fn Histogram(comptime V: type, comptime upper_bounds: []const V) type {
             }
         }
 
-        pub fn write(self: *Self, writer: anytype) !void {
+        pub fn write(self: *Self, writer: *std.io.Writer) !void {
             switch (self.*) {
                 .noop => {},
                 .impl => |*impl| return impl.write(writer),
@@ -95,7 +95,7 @@ pub fn Histogram(comptime V: type, comptime upper_bounds: []const V) type {
                 _ = @atomicRmw(V, &self.buckets[idx], .Add, 1, .monotonic);
             }
 
-            pub fn write(self: *Impl, writer: anytype) !void {
+            pub fn write(self: *Impl, writer: *std.io.Writer) !void {
                 try writer.writeAll(self.preamble);
 
                 var sum: V = 0;
@@ -110,7 +110,7 @@ pub fn Histogram(comptime V: type, comptime upper_bounds: []const V) type {
                 {
                     // write +Inf
                     try writer.writeAll(self.output_bucket_inf_prefix);
-                    try std.fmt.formatInt(total_count, 10, .lower, .{}, writer);
+                    try writer.printInt(total_count, 10, .lower, .{});
                 }
 
                 {
@@ -126,7 +126,7 @@ pub fn Histogram(comptime V: type, comptime upper_bounds: []const V) type {
                     // this includes a leading newline, hence we didn't need to write
                     // it after our output_sum_prefix
                     try writer.writeAll(self.output_count_prefix);
-                    try std.fmt.formatInt(total_count, 10, .lower, .{}, writer);
+                    try writer.printInt(total_count, 10, .lower, .{});
                     try writer.writeByte('\n');
                 }
             }
@@ -158,7 +158,7 @@ pub fn HistogramVec(comptime V: type, comptime L: type, comptime upper_bounds: [
             }
         }
 
-        pub fn write(self: *Self, writer: anytype) !void {
+        pub fn write(self: *Self, writer: *std.io.Writer) !void {
             switch (self.*) {
                 .noop => {},
                 .impl => |*impl| return impl.write(writer),
@@ -341,7 +341,7 @@ pub fn HistogramVec(comptime V: type, comptime L: type, comptime upper_bounds: [
                 allocator.free(kv.value.attributes);
             }
 
-            pub fn write(self: *Impl, writer: anytype) !void {
+            pub fn write(self: *Impl, writer: *std.io.Writer) !void {
                 try writer.writeAll(self.preamble);
 
                 const output_sum_prefix = self.output_sum_prefix;
@@ -391,7 +391,7 @@ pub fn HistogramVec(comptime V: type, comptime L: type, comptime upper_bounds: [
                         // write +Inf
                         try writer.writeAll(output_bucket_inf_prefix);
                         try writer.writeAll(append_attributes);
-                        try std.fmt.formatInt(value_count, 10, .lower, .{}, writer);
+                        try writer.printInt(value_count, 10, .lower, .{});
                     }
 
                     {
@@ -409,7 +409,7 @@ pub fn HistogramVec(comptime V: type, comptime L: type, comptime upper_bounds: [
                         // it after our output_sum_prefix
                         try writer.writeAll(output_count_prefix);
                         try writer.writeAll(attributes);
-                        try std.fmt.formatInt(value_count, 10, .lower, .{}, writer);
+                        try writer.printInt(value_count, 10, .lower, .{});
                         try writer.writeByte('\n');
                     }
                 }
@@ -448,10 +448,11 @@ test "Histogram: noop " {
     var h = Histogram(u32, &.{0}){ .noop = {} };
     h.observe(2);
 
-    var arr = std.ArrayList(u8).init(t.allocator);
-    defer arr.deinit();
-    try h.write(arr.writer());
-    try t.expectEqual(0, arr.items.len);
+    var writer: std.io.Writer.Allocating = .init(t.allocator);
+    defer writer.deinit();
+    try h.write(&writer.writer);
+    const buf = writer.writer.buffered();
+    try t.expectEqual(0, buf.len);
 }
 
 test "Histogram: simple" {
@@ -463,49 +464,56 @@ test "Histogram: simple" {
         h.observe(i);
     }
 
-    var arr = std.ArrayList(u8).init(t.allocator);
-    defer arr.deinit();
-    try h.write(arr.writer());
-    try t.expectString(
-        \\# TYPE hst_1 histogram
-        \\hst_1_bucket{le="0.005"} 161
-        \\hst_1_bucket{le="0.01"} 231
-        \\hst_1_bucket{le="0.025"} 323
-        \\hst_1_bucket{le="0.05"} 393
-        \\hst_1_bucket{le="0.1"} 462
-        \\hst_1_bucket{le="0.25"} 554
-        \\hst_1_bucket{le="0.5"} 624
-        \\hst_1_bucket{le="1"} 694
-        \\hst_1_bucket{le="2.5"} 786
-        \\hst_1_bucket{le="5"} 855
-        \\hst_1_bucket{le="10"} 925
-        \\hst_1_bucket{le="+Inf"} 1000
-        \\hst_1_sum 2116.7737194191777
-        \\hst_1_count 1000
-        \\
-    , arr.items);
+    var writer: std.io.Writer.Allocating = .init(t.allocator);
+    defer writer.deinit();
 
-    arr.clearRetainingCapacity();
-    h.observe(2.8);
-    try h.write(arr.writer());
-    try t.expectString(
-        \\# TYPE hst_1 histogram
-        \\hst_1_bucket{le="0.005"} 0
-        \\hst_1_bucket{le="0.01"} 0
-        \\hst_1_bucket{le="0.025"} 0
-        \\hst_1_bucket{le="0.05"} 0
-        \\hst_1_bucket{le="0.1"} 0
-        \\hst_1_bucket{le="0.25"} 0
-        \\hst_1_bucket{le="0.5"} 0
-        \\hst_1_bucket{le="1"} 0
-        \\hst_1_bucket{le="2.5"} 0
-        \\hst_1_bucket{le="5"} 1
-        \\hst_1_bucket{le="10"} 1
-        \\hst_1_bucket{le="+Inf"} 1
-        \\hst_1_sum 2.8
-        \\hst_1_count 1
-        \\
-    , arr.items);
+    {
+        try h.write(&writer.writer);
+        const buf = writer.writer.buffered();
+        try t.expectString(
+            \\# TYPE hst_1 histogram
+            \\hst_1_bucket{le="0.005"} 161
+            \\hst_1_bucket{le="0.01"} 231
+            \\hst_1_bucket{le="0.025"} 323
+            \\hst_1_bucket{le="0.05"} 393
+            \\hst_1_bucket{le="0.1"} 462
+            \\hst_1_bucket{le="0.25"} 554
+            \\hst_1_bucket{le="0.5"} 624
+            \\hst_1_bucket{le="1"} 694
+            \\hst_1_bucket{le="2.5"} 786
+            \\hst_1_bucket{le="5"} 855
+            \\hst_1_bucket{le="10"} 925
+            \\hst_1_bucket{le="+Inf"} 1000
+            \\hst_1_sum 2116.7737194191777
+            \\hst_1_count 1000
+            \\
+        , buf);
+    }
+
+    {
+        writer.clearRetainingCapacity();
+        h.observe(2.8);
+        try h.write(&writer.writer);
+        const buf = writer.writer.buffered();
+        try t.expectString(
+            \\# TYPE hst_1 histogram
+            \\hst_1_bucket{le="0.005"} 0
+            \\hst_1_bucket{le="0.01"} 0
+            \\hst_1_bucket{le="0.025"} 0
+            \\hst_1_bucket{le="0.05"} 0
+            \\hst_1_bucket{le="0.1"} 0
+            \\hst_1_bucket{le="0.25"} 0
+            \\hst_1_bucket{le="0.5"} 0
+            \\hst_1_bucket{le="1"} 0
+            \\hst_1_bucket{le="2.5"} 0
+            \\hst_1_bucket{le="5"} 1
+            \\hst_1_bucket{le="10"} 1
+            \\hst_1_bucket{le="+Inf"} 1
+            \\hst_1_sum 2.8
+            \\hst_1_count 1
+            \\
+        , buf);
+    }
 }
 
 test "HistogramVec: noop " {
@@ -514,10 +522,11 @@ test "HistogramVec: noop " {
     defer h.deinit();
     try h.observe(.{ .status = 200 }, 2);
 
-    var arr = std.ArrayList(u8).init(t.allocator);
-    defer arr.deinit();
-    try h.write(arr.writer());
-    try t.expectEqual(0, arr.items.len);
+    var writer: std.io.Writer.Allocating = .init(t.allocator);
+    defer writer.deinit();
+    try h.write(&writer.writer);
+    const buf = writer.writer.buffered();
+    try t.expectEqual(0, buf.len);
 }
 
 test "HistogramVec" {
@@ -536,75 +545,82 @@ test "HistogramVec" {
         try h.observe(.{ .status = 400 }, i);
     }
 
-    var arr = std.ArrayList(u8).init(t.allocator);
-    defer arr.deinit();
-    try h.write(arr.writer());
-    try t.expectString(
-        \\# TYPE hst_1 histogram
-        \\hst_1_bucket{le="0.005",status="200"} 161
-        \\hst_1_bucket{le="0.01",status="200"} 231
-        \\hst_1_bucket{le="0.025",status="200"} 323
-        \\hst_1_bucket{le="0.05",status="200"} 393
-        \\hst_1_bucket{le="0.1",status="200"} 462
-        \\hst_1_bucket{le="0.25",status="200"} 554
-        \\hst_1_bucket{le="0.5",status="200"} 624
-        \\hst_1_bucket{le="1",status="200"} 694
-        \\hst_1_bucket{le="2.5",status="200"} 786
-        \\hst_1_bucket{le="5",status="200"} 855
-        \\hst_1_bucket{le="10",status="200"} 925
-        \\hst_1_bucket{le="+Inf",status="200"} 1000
-        \\hst_1_sum{status="200"} 2116.7737194191777
-        \\hst_1_count{status="200"} 1000
-        \\hst_1_bucket{le="0.005",status="400"} 0
-        \\hst_1_bucket{le="0.01",status="400"} 0
-        \\hst_1_bucket{le="0.025",status="400"} 11
-        \\hst_1_bucket{le="0.05",status="400"} 46
-        \\hst_1_bucket{le="0.1",status="400"} 81
-        \\hst_1_bucket{le="0.25",status="400"} 100
-        \\hst_1_bucket{le="0.5",status="400"} 100
-        \\hst_1_bucket{le="1",status="400"} 100
-        \\hst_1_bucket{le="2.5",status="400"} 100
-        \\hst_1_bucket{le="5",status="400"} 100
-        \\hst_1_bucket{le="10",status="400"} 100
-        \\hst_1_bucket{le="+Inf",status="400"} 100
-        \\hst_1_sum{status="400"} 6.369539040617386
-        \\hst_1_count{status="400"} 100
-        \\
-    , arr.items);
+    var writer: std.io.Writer.Allocating = .init(t.allocator);
+    defer writer.deinit();
 
-    try h.observe(.{ .status = 200 }, 9);
-    arr.clearRetainingCapacity();
-    try h.write(arr.writer());
-    try t.expectString(
-        \\# TYPE hst_1 histogram
-        \\hst_1_bucket{le="0.005",status="200"} 0
-        \\hst_1_bucket{le="0.01",status="200"} 0
-        \\hst_1_bucket{le="0.025",status="200"} 0
-        \\hst_1_bucket{le="0.05",status="200"} 0
-        \\hst_1_bucket{le="0.1",status="200"} 0
-        \\hst_1_bucket{le="0.25",status="200"} 0
-        \\hst_1_bucket{le="0.5",status="200"} 0
-        \\hst_1_bucket{le="1",status="200"} 0
-        \\hst_1_bucket{le="2.5",status="200"} 0
-        \\hst_1_bucket{le="5",status="200"} 0
-        \\hst_1_bucket{le="10",status="200"} 1
-        \\hst_1_bucket{le="+Inf",status="200"} 1
-        \\hst_1_sum{status="200"} 9
-        \\hst_1_count{status="200"} 1
-        \\hst_1_bucket{le="0.005",status="400"} 0
-        \\hst_1_bucket{le="0.01",status="400"} 0
-        \\hst_1_bucket{le="0.025",status="400"} 0
-        \\hst_1_bucket{le="0.05",status="400"} 0
-        \\hst_1_bucket{le="0.1",status="400"} 0
-        \\hst_1_bucket{le="0.25",status="400"} 0
-        \\hst_1_bucket{le="0.5",status="400"} 0
-        \\hst_1_bucket{le="1",status="400"} 0
-        \\hst_1_bucket{le="2.5",status="400"} 0
-        \\hst_1_bucket{le="5",status="400"} 0
-        \\hst_1_bucket{le="10",status="400"} 0
-        \\hst_1_bucket{le="+Inf",status="400"} 0
-        \\hst_1_sum{status="400"} 0
-        \\hst_1_count{status="400"} 0
-        \\
-    , arr.items);
+    {
+        try h.write(&writer.writer);
+        const buf = writer.writer.buffered();
+        try t.expectString(
+            \\# TYPE hst_1 histogram
+            \\hst_1_bucket{le="0.005",status="200"} 161
+            \\hst_1_bucket{le="0.01",status="200"} 231
+            \\hst_1_bucket{le="0.025",status="200"} 323
+            \\hst_1_bucket{le="0.05",status="200"} 393
+            \\hst_1_bucket{le="0.1",status="200"} 462
+            \\hst_1_bucket{le="0.25",status="200"} 554
+            \\hst_1_bucket{le="0.5",status="200"} 624
+            \\hst_1_bucket{le="1",status="200"} 694
+            \\hst_1_bucket{le="2.5",status="200"} 786
+            \\hst_1_bucket{le="5",status="200"} 855
+            \\hst_1_bucket{le="10",status="200"} 925
+            \\hst_1_bucket{le="+Inf",status="200"} 1000
+            \\hst_1_sum{status="200"} 2116.7737194191777
+            \\hst_1_count{status="200"} 1000
+            \\hst_1_bucket{le="0.005",status="400"} 0
+            \\hst_1_bucket{le="0.01",status="400"} 0
+            \\hst_1_bucket{le="0.025",status="400"} 11
+            \\hst_1_bucket{le="0.05",status="400"} 46
+            \\hst_1_bucket{le="0.1",status="400"} 81
+            \\hst_1_bucket{le="0.25",status="400"} 100
+            \\hst_1_bucket{le="0.5",status="400"} 100
+            \\hst_1_bucket{le="1",status="400"} 100
+            \\hst_1_bucket{le="2.5",status="400"} 100
+            \\hst_1_bucket{le="5",status="400"} 100
+            \\hst_1_bucket{le="10",status="400"} 100
+            \\hst_1_bucket{le="+Inf",status="400"} 100
+            \\hst_1_sum{status="400"} 6.369539040617386
+            \\hst_1_count{status="400"} 100
+            \\
+        , buf);
+    }
+
+    {
+        try h.observe(.{ .status = 200 }, 9);
+        writer.clearRetainingCapacity();
+        try h.write(&writer.writer);
+        const buf = writer.writer.buffered();
+        try t.expectString(
+            \\# TYPE hst_1 histogram
+            \\hst_1_bucket{le="0.005",status="200"} 0
+            \\hst_1_bucket{le="0.01",status="200"} 0
+            \\hst_1_bucket{le="0.025",status="200"} 0
+            \\hst_1_bucket{le="0.05",status="200"} 0
+            \\hst_1_bucket{le="0.1",status="200"} 0
+            \\hst_1_bucket{le="0.25",status="200"} 0
+            \\hst_1_bucket{le="0.5",status="200"} 0
+            \\hst_1_bucket{le="1",status="200"} 0
+            \\hst_1_bucket{le="2.5",status="200"} 0
+            \\hst_1_bucket{le="5",status="200"} 0
+            \\hst_1_bucket{le="10",status="200"} 1
+            \\hst_1_bucket{le="+Inf",status="200"} 1
+            \\hst_1_sum{status="200"} 9
+            \\hst_1_count{status="200"} 1
+            \\hst_1_bucket{le="0.005",status="400"} 0
+            \\hst_1_bucket{le="0.01",status="400"} 0
+            \\hst_1_bucket{le="0.025",status="400"} 0
+            \\hst_1_bucket{le="0.05",status="400"} 0
+            \\hst_1_bucket{le="0.1",status="400"} 0
+            \\hst_1_bucket{le="0.25",status="400"} 0
+            \\hst_1_bucket{le="0.5",status="400"} 0
+            \\hst_1_bucket{le="1",status="400"} 0
+            \\hst_1_bucket{le="2.5",status="400"} 0
+            \\hst_1_bucket{le="5",status="400"} 0
+            \\hst_1_bucket{le="10",status="400"} 0
+            \\hst_1_bucket{le="+Inf",status="400"} 0
+            \\hst_1_sum{status="400"} 0
+            \\hst_1_count{status="400"} 0
+            \\
+        , buf);
+    }
 }

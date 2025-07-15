@@ -179,10 +179,10 @@ pub fn MetricVec(comptime L: type) type {
 }
 
 // Writes value to writer. Value can either be an integer or float.
-pub fn write(value: anytype, writer: anytype) !void {
+pub fn write(value: anytype, writer: *std.io.Writer) !void {
     switch (@typeInfo(@TypeOf(value))) {
-        .int => return std.fmt.formatInt(value, 10, .lower, .{}, writer),
-        .float => return std.fmt.formatType(value, "d", .{}, writer, 0),
+        .int => return writer.printInt(value, 10, .lower, .{}),
+        .float => return writer.print("{d}", .{value}),
         else => unreachable, // there are guards that prevent this from being possible
     }
 }
@@ -257,8 +257,9 @@ fn serializeValue(allocator: Allocator, value: anytype) !SerializedValue {
         .int => {
             const digits = numberOfDigits(value);
             const buf = try allocator.alloc(u8, digits);
-            const l = std.fmt.formatIntBuf(buf, value, 10, .lower, .{});
-            std.debug.assert(l == digits);
+            var writer: std.io.Writer = .fixed(buf);
+            try writer.printInt(value, 10, .lower, .{});
+            std.debug.assert(writer.end == digits);
             return .{ .str = buf, .allocated = true };
         },
         .bool => return .{ .str = if (value) "true" else "false" },
