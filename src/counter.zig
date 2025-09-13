@@ -39,7 +39,7 @@ pub fn Counter(comptime V: type) type {
             }
         }
 
-        pub fn write(self: *Self, writer: *std.io.Writer) !void {
+        pub fn write(self: *Self, writer: *std.Io.Writer) !void {
             switch (self.*) {
                 .noop => {},
                 .impl => |*impl| return impl.write(writer),
@@ -65,7 +65,7 @@ pub fn Counter(comptime V: type) type {
                 _ = @atomicRmw(V, &self.count, .Add, count, .monotonic);
             }
 
-            pub fn write(self: *const Impl, writer: *std.io.Writer) !void {
+            pub fn write(self: *const Impl, writer: *std.Io.Writer) !void {
                 try writer.writeAll(self.preamble);
                 const count = @atomicLoad(V, &self.count, .monotonic);
                 try m.write(count, writer);
@@ -119,7 +119,7 @@ pub fn CounterVec(comptime V: type, comptime L: type) type {
             }
         }
 
-        pub fn write(self: *Self, writer: *std.io.Writer) !void {
+        pub fn write(self: *Self, writer: *std.Io.Writer) !void {
             switch (self.*) {
                 .noop => {},
                 .impl => |*impl| return impl.write(writer),
@@ -215,7 +215,7 @@ pub fn CounterVec(comptime V: type, comptime L: type) type {
                 allocator.free(kv.value.attributes);
             }
 
-            pub fn write(self: *Impl, writer: *std.io.Writer) !void {
+            pub fn write(self: *Impl, writer: *std.Io.Writer) !void {
                 try writer.writeAll(self.preamble);
 
                 const name = self.vec.name;
@@ -255,7 +255,7 @@ test "Counter: noop incr/incrBy" {
     c.incr();
     c.incrBy(10);
 
-    var writer: std.io.Writer.Allocating = .init(t.allocator);
+    var writer: std.Io.Writer.Allocating = .init(t.allocator);
     defer writer.deinit();
     try c.write(&writer.writer);
     try t.expectEqual(0, writer.writer.end);
@@ -270,7 +270,7 @@ test "Counter: incr/incrBy" {
 }
 
 test "Counter: write" {
-    var writer: std.io.Writer.Allocating = .init(t.allocator);
+    var writer: std.Io.Writer.Allocating = .init(t.allocator);
     defer writer.deinit();
 
     var c = Counter(u32).init("metric_cnt_1_x", .{}, .{ .exclude = &.{"t_ex"} });
@@ -295,7 +295,7 @@ test "Counter: exclude" {
     var c = Counter(u32).init("t_ex", .{}, .{ .exclude = &.{"t_ex"} });
     c.incr();
 
-    var writer: std.io.Writer.Allocating = .init(t.allocator);
+    var writer: std.Io.Writer.Allocating = .init(t.allocator);
     defer writer.deinit();
     try c.write(&writer.writer);
     const buf = writer.writer.buffered();
@@ -306,7 +306,7 @@ test "Counter: prefix" {
     var c = Counter(u32).init("t1_p", .{}, .{ .prefix = "hello_" });
     c.incr();
 
-    var writer: std.io.Writer.Allocating = .init(t.allocator);
+    var writer: std.Io.Writer.Allocating = .init(t.allocator);
     defer writer.deinit();
     try c.write(&writer.writer);
     const buf = writer.writer.buffered();
@@ -322,7 +322,7 @@ test "Counter: float incr/incrBy" {
 }
 
 test "Counter: float write" {
-    var writer: std.io.Writer.Allocating = .init(
+    var writer: std.Io.Writer.Allocating = .init(
         t.allocator,
     );
     defer writer.deinit();
@@ -352,7 +352,7 @@ test "CounterVec: noop incr/incrBy" {
     try c.incr(.{ .id = 3 });
     try c.incrBy(.{ .id = 10 }, 20);
 
-    var writer: std.io.Writer.Allocating = .init(t.allocator);
+    var writer: std.Io.Writer.Allocating = .init(t.allocator);
     defer writer.deinit();
     try c.write(&writer.writer);
     const buf = writer.writer.buffered();
@@ -360,7 +360,7 @@ test "CounterVec: noop incr/incrBy" {
 }
 
 test "CounterVec: incr/incrBy + write" {
-    var writer: std.io.Writer.Allocating = .init(t.allocator);
+    var writer: std.Io.Writer.Allocating = .init(t.allocator);
     defer writer.deinit();
 
     const preamble = "# HELP counter_vec_1 h1\n# TYPE counter_vec_1 counter\n";
@@ -404,7 +404,7 @@ test "CounterVec: incr/incrBy + write" {
 }
 
 test "CounterVec: float incr/incrBy + write" {
-    var writer: std.io.Writer.Allocating = .init(t.allocator);
+    var writer: std.Io.Writer.Allocating = .init(t.allocator);
     defer writer.deinit();
 
     const preamble = "# HELP counter_vec_xx_2 h1\n# TYPE counter_vec_xx_2 counter\n";
@@ -453,7 +453,7 @@ test "Counter: concurrent create" {
     }.run;
 
     for (1..100) |_| {
-        var writer: std.io.Writer.Allocating = .init(t.allocator);
+        var writer: std.Io.Writer.Allocating = .init(t.allocator);
         defer writer.deinit();
 
         var c = try EquitiesCounter.init(t.allocator, "counter_vec_concurrent", .{}, .{});

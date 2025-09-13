@@ -47,7 +47,7 @@ pub fn Gauge(comptime V: type) type {
             }
         }
 
-        pub fn write(self: *Self, writer: *std.io.Writer) !void {
+        pub fn write(self: *Self, writer: *std.Io.Writer) !void {
             switch (self.*) {
                 .noop => {},
                 .impl => |*impl| return impl.write(writer),
@@ -77,7 +77,7 @@ pub fn Gauge(comptime V: type) type {
                 @atomicStore(V, &self.value, value, .monotonic);
             }
 
-            pub fn write(self: *const Impl, writer: *std.io.Writer) !void {
+            pub fn write(self: *const Impl, writer: *std.Io.Writer) !void {
                 try writer.writeAll(self.preamble);
                 try m.write(@atomicLoad(V, &self.value, .monotonic), writer);
                 return writer.writeByte('\n');
@@ -137,7 +137,7 @@ pub fn GaugeVec(comptime V: type, comptime L: type) type {
             }
         }
 
-        pub fn write(self: *Self, writer: *std.io.Writer) !void {
+        pub fn write(self: *Self, writer: *std.Io.Writer) !void {
             switch (self.*) {
                 .noop => {},
                 .impl => |*impl| return impl.write(writer),
@@ -217,7 +217,7 @@ pub fn GaugeVec(comptime V: type, comptime L: type) type {
                 allocator.free(kv.value.attributes);
             }
 
-            pub fn write(self: *Impl, writer: *std.io.Writer) !void {
+            pub fn write(self: *Impl, writer: *std.Io.Writer) !void {
                 try writer.writeAll(self.preamble);
 
                 const name = self.vec.name;
@@ -299,7 +299,7 @@ test "Gauge: noop incr/incrBy/set" {
     c.incrBy(10);
     c.set(100);
 
-    var writer: std.io.Writer.Allocating = .init(t.allocator);
+    var writer: std.Io.Writer.Allocating = .init(t.allocator);
     defer writer.deinit();
     try c.write(&writer.writer);
     const buf = writer.writer.buffered();
@@ -323,7 +323,7 @@ test "Gauge: incr/incrBy/set" {
 }
 
 test "Gauge: write" {
-    var writer: std.io.Writer.Allocating = .init(t.allocator);
+    var writer: std.Io.Writer.Allocating = .init(t.allocator);
     defer writer.deinit();
 
     var g = Gauge(i32).init("metric_grp_1_x", .{}, .{});
@@ -363,7 +363,7 @@ test "Gauge: float incr/incrBy/set" {
 }
 
 test "Gauge: float write" {
-    var writer: std.io.Writer.Allocating = .init(t.allocator);
+    var writer: std.Io.Writer.Allocating = .init(t.allocator);
     defer writer.deinit();
 
     var c = Gauge(f64).init("metric_g_2_x", .{}, .{});
@@ -400,7 +400,7 @@ test "GaugeVec: noop incr/incrBy/set" {
     try g.incrBy(.{ .id = 10 }, 20);
     try g.set(.{ .id = 3 }, 11);
 
-    var writer: std.io.Writer.Allocating = .init(t.allocator);
+    var writer: std.Io.Writer.Allocating = .init(t.allocator);
     defer writer.deinit();
     try g.write(&writer.writer);
     const buf = writer.writer.buffered();
@@ -408,7 +408,7 @@ test "GaugeVec: noop incr/incrBy/set" {
 }
 
 test "GaugeVec: incr/incrBy/set + write" {
-    var writer: std.io.Writer.Allocating = .init(t.allocator);
+    var writer: std.Io.Writer.Allocating = .init(t.allocator);
     defer writer.deinit();
 
     const preamble = "# HELP gauge_vec_1 h1\n# TYPE gauge_vec_1 gauge\n";
@@ -454,7 +454,7 @@ test "GaugeVec: incr/incrBy/set + write" {
 }
 
 test "GaugeVec: float incr/incrBy/set + write" {
-    var writer: std.io.Writer.Allocating = .init(t.allocator);
+    var writer: std.Io.Writer.Allocating = .init(t.allocator);
     defer writer.deinit();
 
     const preamble = "# HELP gauge_vec_xx_2 h1\n# TYPE gauge_vec_xx_2 gauge\n";
@@ -505,7 +505,7 @@ test "Gauge: concurrent create" {
     }.run;
 
     for (0..100) |_| {
-        var writer: std.io.Writer.Allocating = .init(t.allocator);
+        var writer: std.Io.Writer.Allocating = .init(t.allocator);
         defer writer.deinit();
 
         var c = try EquitiesGauge.init(t.allocator, "gauge_vec_concurrent", .{}, .{});
