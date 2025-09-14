@@ -35,7 +35,7 @@ pub fn Histogram(comptime V: type, comptime upper_bounds: []const V) type {
             }
         }
 
-        pub fn write(self: *Self, writer: *std.io.Writer) !void {
+        pub fn write(self: *Self, writer: *std.Io.Writer) !void {
             switch (self.*) {
                 .noop => {},
                 .impl => |*impl| return impl.write(writer),
@@ -95,7 +95,7 @@ pub fn Histogram(comptime V: type, comptime upper_bounds: []const V) type {
                 _ = @atomicRmw(V, &self.buckets[idx], .Add, 1, .monotonic);
             }
 
-            pub fn write(self: *Impl, writer: *std.io.Writer) !void {
+            pub fn write(self: *Impl, writer: *std.Io.Writer) !void {
                 try writer.writeAll(self.preamble);
 
                 var sum: V = 0;
@@ -158,7 +158,7 @@ pub fn HistogramVec(comptime V: type, comptime L: type, comptime upper_bounds: [
             }
         }
 
-        pub fn write(self: *Self, writer: *std.io.Writer) !void {
+        pub fn write(self: *Self, writer: *std.Io.Writer) !void {
             switch (self.*) {
                 .noop => {},
                 .impl => |*impl| return impl.write(writer),
@@ -341,7 +341,7 @@ pub fn HistogramVec(comptime V: type, comptime L: type, comptime upper_bounds: [
                 allocator.free(kv.value.attributes);
             }
 
-            pub fn write(self: *Impl, writer: *std.io.Writer) !void {
+            pub fn write(self: *Impl, writer: *std.Io.Writer) !void {
                 try writer.writeAll(self.preamble);
 
                 const output_sum_prefix = self.output_sum_prefix;
@@ -448,7 +448,7 @@ test "Histogram: noop " {
     var h = Histogram(u32, &.{0}){ .noop = {} };
     h.observe(2);
 
-    var writer: std.io.Writer.Allocating = .init(t.allocator);
+    var writer: std.Io.Writer.Allocating = .init(t.allocator);
     defer writer.deinit();
     try h.write(&writer.writer);
     const buf = writer.writer.buffered();
@@ -464,7 +464,7 @@ test "Histogram: simple" {
         h.observe(i);
     }
 
-    var writer: std.io.Writer.Allocating = .init(t.allocator);
+    var writer: std.Io.Writer.Allocating = .init(t.allocator);
     defer writer.deinit();
 
     {
@@ -522,7 +522,7 @@ test "HistogramVec: noop " {
     defer h.deinit();
     try h.observe(.{ .status = 200 }, 2);
 
-    var writer: std.io.Writer.Allocating = .init(t.allocator);
+    var writer: std.Io.Writer.Allocating = .init(t.allocator);
     defer writer.deinit();
     try h.write(&writer.writer);
     const buf = writer.writer.buffered();
@@ -545,7 +545,7 @@ test "HistogramVec" {
         try h.observe(.{ .status = 400 }, i);
     }
 
-    var writer: std.io.Writer.Allocating = .init(t.allocator);
+    var writer: std.Io.Writer.Allocating = .init(t.allocator);
     defer writer.deinit();
 
     {
