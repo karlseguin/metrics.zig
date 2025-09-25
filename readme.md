@@ -44,7 +44,7 @@ pub fn initializeMetrics(comptime opts: m.RegistryOpts) !void {
 }
 
 // thread safe
-pub fn writeMetrics(writer: *std.io.Writer) !void {
+pub fn writeMetrics(writer: *std.Io.Writer) !void {
     return m.write(&metrics, writer);
 }
 ```
@@ -187,7 +187,7 @@ This method is designed to allow a global "metrics" instance to exist and be saf
 #### `write(metrics: anytype, writer: *std.Io.Writer) !void`
 Calls the `write(writer) !void` method on every metric field within `metrics`.
 
-Library developers are expected to wrap this method in a `writeMetric(writer: *std.io.Writer) !void` function. This function requires a pointer to your metrics.
+Library developers are expected to wrap this method in a `writeMetric(writer: *std.Io.Writer) !void` function. This function requires a pointer to your metrics.
 
 ### Counter(T)
 A `Counter(T)` is used for incrementing values. `T` can be an unsigned integer or a float. Its two main methods are `incr()` and `incrBy(value: T)`. `incr()` is a short version of `incrBy(1)`.
@@ -205,7 +205,7 @@ Increments the counter by 1.
 #### `incrBy(self: *Counter(T), value: T) void`
 Increments the counter by `value`.
 
-#### `write(self: *const Counter(T), writer: *std.io.Writer) !void`
+#### `write(self: *const Counter(T), writer: *std.Io.Writer) !void`
 Writes the counter to `writer`.
 
 ### CounterVec(T, L)
@@ -229,7 +229,7 @@ Increments the counter by `value`. Vectored metrics can fail.
 #### `remove(self: *CounterVec(T, L), labels: L) void`
 Removes the labeled value from the counter. Safe to call if `labels` is not an existing label.
 
-#### `write(self: *CounterVec(T, L), writer: *std.io.Writer) !void`
+#### `write(self: *CounterVec(T, L), writer: *std.Io.Writer) !void`
 Writes the counter to `writer`.
 
 ### Gauge(T)
@@ -250,7 +250,7 @@ Increments the gauge by `value`.
 #### `set(self: *Gauge(T), value: T) void`
 Sets the the gauge to `value`.
 
-#### `write(self: *Gauge(T), writer: *std.io.Writer) !void`
+#### `write(self: *Gauge(T), writer: *std.Io.Writer) !void`
 Writes the gauge to `writer`.
 
 ### GaugeVec(T, L)
@@ -277,7 +277,7 @@ Sets the gauge to `value`. Vectored metrics can fail.
 #### `remove(self: *GaugeVec(T, L), labels: L) void`
 Removes the labeled value from the gauge. Safe to call if `labels` is not an existing label.
 
-#### `write(self: *GaugeVec(T, L), writer: *std.io.Writer) !void`
+#### `write(self: *GaugeVec(T, L), writer: *std.Io.Writer) !void`
 Writes the gauge to `writer`.
 
 ### Histogram(T, []T)
@@ -294,7 +294,7 @@ Opts is:
 #### `observe(self: *Histogram(T, []T), value: T) void`
 Observes `value`, bucketing it based on the provided comptime buckets.
 
-#### `write(self: *Histogram(T, []T), writer: *std.io.Writer) !void`
+#### `write(self: *Histogram(T, []T), writer: *std.Io.Writer) !void`
 Writes the histogram to `writer`.
 
 ### Histogram(T, L, []T)
@@ -317,5 +317,5 @@ Observes `value`, bucketing it based on the provided comptime buckets.
 #### `remove(self: *Histogram(T, L, []T), labels: L) void`
 Removes the labeled value from the histogram. Safe to call if `labels` is not an existing label.
 
-#### `write(self: Histogram(T, L, []T), writer: *std.io.Writer) !void`
+#### `write(self: Histogram(T, L, []T), writer: *std.Io.Writer) !void`
 Writes the histogram to `writer`.

@@ -43,7 +43,7 @@ pub fn initializeNoop(comptime T: type) T {
     }
 }
 
-pub fn write(metrics: anytype, writer: *std.io.Writer) !void {
+pub fn write(metrics: anytype, writer: *std.Io.Writer) !void {
     const S = @typeInfo(@TypeOf(metrics)).pointer.child;
     const fields = @typeInfo(S).@"struct".fields;
 
@@ -68,7 +68,7 @@ test "initializeNoop + write" {
         latency: Histogram(u32, &.{ 0, 2 }),
     });
 
-    var writer: std.io.Writer.Allocating = .init(t.allocator);
+    var writer: std.Io.Writer.Allocating = .init(t.allocator);
     defer writer.deinit();
     try write(&x, &writer.writer);
     const buf = writer.writer.buffered();
@@ -89,7 +89,7 @@ test "metrics: write" {
     defer m.hits.deinit();
     defer m.timing.deinit();
 
-    var writer: std.io.Writer.Allocating = .init(t.allocator);
+    var writer: std.Io.Writer.Allocating = .init(t.allocator);
     defer writer.deinit();
 
     m.active.set(919);
