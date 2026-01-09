@@ -251,8 +251,9 @@ const Env = struct {
     }
 
     fn readEnv(allocator: Allocator, key: []const u8) ?[]const u8 {
-        const v = std.process.getEnvVarOwned(allocator, key) catch |err| {
-            if (err == error.EnvironmentVariableNotFound) {
+        const env: std.process.Environ = .empty;
+        const v = env.getAlloc(allocator, key) catch |err| {
+            if (err == error.EnvironmentVariableMissing) {
                 return null;
             }
             std.log.warn("failed to get env var {s} due to err {}", .{ key, err });
