@@ -100,13 +100,13 @@ pub fn Histogram(comptime V: type, comptime upper_bounds: []const V) type {
 
                 var sum: V = 0;
                 for (self.output_bucket_prefixes, 0..) |prefix, i| {
-                    sum += @atomicRmw(V, &self.buckets[i], .Xchg, 0, .monotonic);
+                    sum += @atomicLoad(V, &self.buckets[i], .monotonic);
                     try writer.writeAll(prefix);
                     try m.write(sum, writer);
                     try writer.writeByte('\n');
                 }
 
-                const total_count = @atomicRmw(usize, &self.count, .Xchg, 0, .monotonic);
+                const total_count = @atomicLoad(usize, &self.count, .monotonic);
                 {
                     // write +Inf
                     try writer.writeAll(self.output_bucket_inf_prefix);
@@ -118,7 +118,7 @@ pub fn Histogram(comptime V: type, comptime upper_bounds: []const V) type {
                     // this includes a leading newline, hence we didn't need to write
                     // it after our output_bucket_inf_prefix
                     try writer.writeAll(self.output_sum_prefix);
-                    try m.write(@atomicRmw(V, &self.sum, .Xchg, 0, .monotonic), writer);
+                    try m.write(@atomicLoad(V, &self.sum, .monotonic), writer);
                 }
 
                 {
@@ -359,15 +359,12 @@ pub fn HistogramVec(comptime V: type, comptime L: type, comptime upper_bounds: [
                     // copy our sum/count/bucket_counts out of Value into local variables
                     // to minimize our lock duration
                     value.mutex.lock();
-                    var buckets = &value.buckets;
+                    const buckets = &value.buckets;
                     const value_sum = value.sum;
                     const value_count = value.count;
                     for (buckets, 0..) |bucket_count, i| {
                         bucket_counts[i] = bucket_count;
-                        buckets[i] = 0;
                     }
-                    value.sum = 0;
-                    value.count = 0;
                     value.mutex.unlock();
 
                     const attributes = value.attributes;
@@ -497,20 +494,20 @@ test "Histogram: simple" {
         const buf = writer.writer.buffered();
         try t.expectString(
             \\# TYPE hst_1 histogram
-            \\hst_1_bucket{le="0.005"} 0
-            \\hst_1_bucket{le="0.01"} 0
-            \\hst_1_bucket{le="0.025"} 0
-            \\hst_1_bucket{le="0.05"} 0
-            \\hst_1_bucket{le="0.1"} 0
-            \\hst_1_bucket{le="0.25"} 0
-            \\hst_1_bucket{le="0.5"} 0
-            \\hst_1_bucket{le="1"} 0
-            \\hst_1_bucket{le="2.5"} 0
-            \\hst_1_bucket{le="5"} 1
-            \\hst_1_bucket{le="10"} 1
-            \\hst_1_bucket{le="+Inf"} 1
-            \\hst_1_sum 2.8
-            \\hst_1_count 1
+             \\hst_1_bucket{le="0.005"} 161
+             \\hst_1_bucket{le="0.01"} 231
+             \\hst_1_bucket{le="0.025"} 323
+             \\hst_1_bucket{le="0.05"} 393
+             \\hst_1_bucket{le="0.1"} 462
+             \\hst_1_bucket{le="0.25"} 554
+             \\hst_1_bucket{le="0.5"} 624
+             \\hst_1_bucket{le="1"} 694
+             \\hst_1_bucket{le="2.5"} 786
+             \\hst_1_bucket{le="5"} 856
+             \\hst_1_bucket{le="10"} 926
+             \\hst_1_bucket{le="+Inf"} 1001
+             \\hst_1_sum 2119.573719419178
+             \\hst_1_count 1001
             \\
         , buf);
     }
@@ -592,34 +589,34 @@ test "HistogramVec" {
         const buf = writer.writer.buffered();
         try t.expectString(
             \\# TYPE hst_1 histogram
-            \\hst_1_bucket{le="0.005",status="200"} 0
-            \\hst_1_bucket{le="0.01",status="200"} 0
-            \\hst_1_bucket{le="0.025",status="200"} 0
-            \\hst_1_bucket{le="0.05",status="200"} 0
-            \\hst_1_bucket{le="0.1",status="200"} 0
-            \\hst_1_bucket{le="0.25",status="200"} 0
-            \\hst_1_bucket{le="0.5",status="200"} 0
-            \\hst_1_bucket{le="1",status="200"} 0
-            \\hst_1_bucket{le="2.5",status="200"} 0
-            \\hst_1_bucket{le="5",status="200"} 0
-            \\hst_1_bucket{le="10",status="200"} 1
-            \\hst_1_bucket{le="+Inf",status="200"} 1
-            \\hst_1_sum{status="200"} 9
-            \\hst_1_count{status="200"} 1
+            \\hst_1_bucket{le="0.005",status="200"} 161
+            \\hst_1_bucket{le="0.01",status="200"} 231
+            \\hst_1_bucket{le="0.025",status="200"} 323
+            \\hst_1_bucket{le="0.05",status="200"} 393
+            \\hst_1_bucket{le="0.1",status="200"} 462
+            \\hst_1_bucket{le="0.25",status="200"} 554
+            \\hst_1_bucket{le="0.5",status="200"} 624
+            \\hst_1_bucket{le="1",status="200"} 694
+            \\hst_1_bucket{le="2.5",status="200"} 786
+            \\hst_1_bucket{le="5",status="200"} 855
+            \\hst_1_bucket{le="10",status="200"} 926
+            \\hst_1_bucket{le="+Inf",status="200"} 1001
+            \\hst_1_sum{status="200"} 2125.7737194191777
+            \\hst_1_count{status="200"} 1001
             \\hst_1_bucket{le="0.005",status="400"} 0
             \\hst_1_bucket{le="0.01",status="400"} 0
-            \\hst_1_bucket{le="0.025",status="400"} 0
-            \\hst_1_bucket{le="0.05",status="400"} 0
-            \\hst_1_bucket{le="0.1",status="400"} 0
-            \\hst_1_bucket{le="0.25",status="400"} 0
-            \\hst_1_bucket{le="0.5",status="400"} 0
-            \\hst_1_bucket{le="1",status="400"} 0
-            \\hst_1_bucket{le="2.5",status="400"} 0
-            \\hst_1_bucket{le="5",status="400"} 0
-            \\hst_1_bucket{le="10",status="400"} 0
-            \\hst_1_bucket{le="+Inf",status="400"} 0
-            \\hst_1_sum{status="400"} 0
-            \\hst_1_count{status="400"} 0
+            \\hst_1_bucket{le="0.025",status="400"} 11
+            \\hst_1_bucket{le="0.05",status="400"} 46
+            \\hst_1_bucket{le="0.1",status="400"} 81
+            \\hst_1_bucket{le="0.25",status="400"} 100
+            \\hst_1_bucket{le="0.5",status="400"} 100
+            \\hst_1_bucket{le="1",status="400"} 100
+            \\hst_1_bucket{le="2.5",status="400"} 100
+            \\hst_1_bucket{le="5",status="400"} 100
+            \\hst_1_bucket{le="10",status="400"} 100
+            \\hst_1_bucket{le="+Inf",status="400"} 100
+            \\hst_1_sum{status="400"} 6.369539040617386
+            \\hst_1_count{status="400"} 100
             \\
         , buf);
     }
