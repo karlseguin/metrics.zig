@@ -23,8 +23,12 @@ pub fn main() !void {
     const env = Env.init(allocator);
     defer env.deinit(allocator);
 
-    var slowest = SlowTracker.init(allocator, 5);
-    defer slowest.deinit();
+    var t_io = std.Io.Threaded.init(allocator, .{});
+    defer t_io.deinit();
+    const io = t_io.io();
+
+    var slowest = SlowTracker.init(allocator, 5, io);
+    defer slowest.deinit(allocator);
 
     var pass: usize = 0;
     var fail: usize = 0;
@@ -74,7 +78,7 @@ pub fn main() !void {
         const result = t.func();
         current_test = null;
 
-        const ns_taken = slowest.endTiming(friendly_name);
+        const ns_taken = slowest.endTiming(allocator, friendly_name);
 
         if (std.testing.allocator_instance.deinit() == .leak) {
             leak += 1;
@@ -160,15 +164,17 @@ const SlowTracker = struct {
     const SlowestQueue = std.PriorityDequeue(TestInfo, void, compareTiming);
     max: usize,
     slowest: SlowestQueue,
-    timer: std.time.Timer,
+    io: std.Io,
+    start_timestamp: std.Io.Clock.Timestamp,
 
-    fn init(allocator: Allocator, count: u32) SlowTracker {
-        const timer = std.time.Timer.start() catch @panic("failed to start timer");
-        var slowest = SlowestQueue.init(allocator, {});
-        slowest.ensureTotalCapacity(count) catch @panic("OOM");
+    fn init(allocator: Allocator, count: u32, io: std.Io) SlowTracker {
+        const start_timestamp = std.Io.Clock.Timestamp.now(io, .awake);
+        var slowest = SlowestQueue.initContext({});
+        slowest.ensureTotalCapacity(allocator, count) catch @panic("OOM");
         return .{
             .max = count,
-            .timer = timer,
+            .io = io,
+            .start_timestamp = start_timestamp,
             .slowest = slowest,
         };
     }
@@ -178,24 +184,24 @@ const SlowTracker = struct {
         name: []const u8,
     };
 
-    fn deinit(self: SlowTracker) void {
-        self.slowest.deinit();
+    fn deinit(self: SlowTracker, allocator: Allocator) void {
+        self.slowest.deinit(allocator);
     }
 
     fn startTiming(self: *SlowTracker) void {
-        self.timer.reset();
+        self.start_timestamp = std.Io.Clock.Timestamp.now(self.io, .awake);
     }
 
-    fn endTiming(self: *SlowTracker, test_name: []const u8) u64 {
-        var timer = self.timer;
-        const ns = timer.lap();
+    fn endTiming(self: *SlowTracker, allocator: Allocator, test_name: []const u8) u64 {
+        const duration = self.start_timestamp.untilNow(self.io);
+        const ns = @as(u64, @intCast(duration.raw.nanoseconds));
 
         var slowest = &self.slowest;
 
         if (slowest.count() < self.max) {
             // Capacity is fixed to the # of slow tests we want to track
             // If we've tracked fewer tests than this capacity, than always add
-            slowest.add(TestInfo{ .ns = ns, .name = test_name }) catch @panic("failed to track test timing");
+            slowest.push(allocator, TestInfo{ .ns = ns, .name = test_name }) catch @panic("failed to track test timing");
             return ns;
         }
 
@@ -210,8 +216,8 @@ const SlowTracker = struct {
         }
 
         // the previous fastest of our slow tests, has been pushed off.
-        _ = slowest.removeMin();
-        slowest.add(TestInfo{ .ns = ns, .name = test_name }) catch @panic("failed to track test timing");
+        _ = slowest.popMin();
+        slowest.push(allocator, TestInfo{ .ns = ns, .name = test_name }) catch @panic("failed to track test timing");
         return ns;
     }
 
@@ -219,7 +225,7 @@ const SlowTracker = struct {
         var slowest = self.slowest;
         const count = slowest.count();
         Printer.fmt("Slowest {d} test{s}: \n", .{ count, if (count != 1) "s" else "" });
-        while (slowest.removeMinOrNull()) |info| {
+        while (slowest.popMin()) |info| {
             const ms = @as(f64, @floatFromInt(info.ns)) / 1_000_000.0;
             Printer.fmt("  {d:.2}ms\t{s}\n", .{ ms, info.name });
         }
