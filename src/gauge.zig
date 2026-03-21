@@ -95,10 +95,10 @@ pub fn GaugeVec(comptime V: type, comptime L: type) type {
 
         const Self = @This();
 
-        pub fn init(allocator: Allocator, comptime name: []const u8, comptime opts: Opts, comptime ropts: RegistryOpts) !Self {
+        pub fn init(allocator: Allocator, io: std.Io, comptime name: []const u8, comptime opts: Opts, comptime ropts: RegistryOpts) !Self {
             switch (ropts.shouldExclude(name)) {
                 true => return .{ .noop = {} },
-                false => return .{ .impl = try Impl.init(allocator, ropts.prefix ++ name, opts) },
+                false => return .{ .impl = try Impl.init(allocator, io, ropts.prefix ++ name, opts) },
             }
         }
 
@@ -148,7 +148,8 @@ pub fn GaugeVec(comptime V: type, comptime L: type) type {
             vec: MetricVec(L),
             preamble: []const u8,
             allocator: Allocator,
-            lock: std.Thread.RwLock,
+            io: std.Io,
+            lock: std.Io.RwLock,
             values: MetricVec(L).HashMap(Value),
 
             const Value = struct {
@@ -156,10 +157,11 @@ pub fn GaugeVec(comptime V: type, comptime L: type) type {
                 attributes: []const u8,
             };
 
-            pub fn init(allocator: Allocator, comptime name: []const u8, comptime opts: Opts) !Impl {
+            pub fn init(allocator: Allocator, io: std.Io, comptime name: []const u8, comptime opts: Opts) !Impl {
                 return .{
-                    .lock = .{},
+                    .lock = std.Io.RwLock.init,
                     .allocator = allocator,
+                    .io = io,
                     .vec = try MetricVec(L).init(name),
                     .values = MetricVec(L).HashMap(Value){},
                     .preamble = comptime m.preamble(name, .gauge, false, opts.help),
@@ -207,8 +209,11 @@ pub fn GaugeVec(comptime V: type, comptime L: type) type {
 
             pub fn remove(self: *Impl, labels: L) void {
                 const kv = blk: {
-                    self.lock.lock();
-                    defer self.lock.unlock();
+                    self.lock.lock(self.io) catch |err| switch (err) {
+                        std.Io.Cancelable.Canceled => return,
+                        else => unreachable,
+                    };
+                    defer self.lock.unlock(self.io);
                     break :blk self.values.fetchRemove(labels) orelse return;
                 };
 
@@ -222,8 +227,8 @@ pub fn GaugeVec(comptime V: type, comptime L: type) type {
 
                 const name = self.vec.name;
 
-                self.lock.lockShared();
-                defer self.lock.unlockShared();
+                try self.lock.lockShared(self.io);
+                defer self.lock.unlockShared(self.io);
 
                 var it = self.values.iterator();
                 while (it.next()) |kv| {
@@ -245,8 +250,8 @@ pub fn GaugeVec(comptime V: type, comptime L: type) type {
                 const allocator = self.allocator;
 
                 {
-                    self.lock.lockShared();
-                    defer self.lock.unlockShared();
+                    try self.lock.lockShared(self.io);
+                    defer self.lock.unlockShared(self.io);
                     if (self.values.getPtr(labels)) |existing| {
                         fa(value, existing);
                         return;
@@ -267,8 +272,8 @@ pub fn GaugeVec(comptime V: type, comptime L: type) type {
                     .attributes = attributes,
                 };
 
-                self.lock.lock();
-                defer self.lock.unlock();
+                try self.lock.lock(self.io);
+                defer self.lock.unlock(self.io);
 
                 const gop = try self.values.getOrPut(allocator, owned_labels);
                 if (gop.found_existing) {
@@ -408,13 +413,15 @@ test "GaugeVec: noop incr/incrBy/set" {
 }
 
 test "GaugeVec: incr/incrBy/set + write" {
+    const io = std.testing.io;
+
     var writer: std.Io.Writer.Allocating = .init(t.allocator);
     defer writer.deinit();
 
     const preamble = "# HELP gauge_vec_1 h1\n# TYPE gauge_vec_1 gauge\n";
 
     // these should just not crash
-    var g = try GaugeVec(i64, struct { id: []const u8 }).init(t.allocator, "gauge_vec_1", .{ .help = "h1" }, .{});
+    var g = try GaugeVec(i64, struct { id: []const u8 }).init(t.allocator, io, "gauge_vec_1", .{ .help = "h1" }, .{});
     defer g.deinit();
 
     {
@@ -454,13 +461,15 @@ test "GaugeVec: incr/incrBy/set + write" {
 }
 
 test "GaugeVec: float incr/incrBy/set + write" {
+    const io = std.testing.io;
+
     var writer: std.Io.Writer.Allocating = .init(t.allocator);
     defer writer.deinit();
 
     const preamble = "# HELP gauge_vec_xx_2 h1\n# TYPE gauge_vec_xx_2 gauge\n";
 
     // these should just not crash
-    var g = try GaugeVec(f64, struct { id: []const u8 }).init(t.allocator, "gauge_vec_xx_2", .{ .help = "h1" }, .{});
+    var g = try GaugeVec(f64, struct { id: []const u8 }).init(t.allocator, io, "gauge_vec_xx_2", .{ .help = "h1" }, .{});
     defer g.deinit();
 
     {
@@ -491,6 +500,7 @@ test "GaugeVec: float incr/incrBy/set + write" {
 }
 
 test "Gauge: concurrent create" {
+    const io = std.testing.io;
     const EquitiesGauge = GaugeVec(u64, struct {
         symbol: []const u8,
         type: []const u8,
@@ -508,7 +518,7 @@ test "Gauge: concurrent create" {
         var writer: std.Io.Writer.Allocating = .init(t.allocator);
         defer writer.deinit();
 
-        var c = try EquitiesGauge.init(t.allocator, "gauge_vec_concurrent", .{}, .{});
+        var c = try EquitiesGauge.init(t.allocator, io, "gauge_vec_concurrent", .{}, .{});
         defer c.deinit();
 
         var th1 = try std.Thread.spawn(.{}, run, .{&c});
