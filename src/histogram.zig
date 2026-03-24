@@ -1,4 +1,5 @@
 const std = @import("std");
+const lock_impl = @import("lock.zig");
 const Allocator = std.mem.Allocator;
 
 const m = @import("metric.zig");
@@ -178,7 +179,7 @@ pub fn HistogramVec(comptime V: type, comptime L: type, comptime upper_bounds: [
             vec: MetricVec(L),
             preamble: []const u8,
             allocator: Allocator,
-            lock: std.Thread.RwLock,
+            lock: lock_impl.RwLock,
             values: MetricVec(L).HashMap(Value),
             output_sum_prefix: []const u8,
             output_count_prefix: []const u8,
@@ -188,7 +189,7 @@ pub fn HistogramVec(comptime V: type, comptime L: type, comptime upper_bounds: [
             const Value = struct {
                 sum: V,
                 count: usize,
-                mutex: std.Thread.Mutex,
+                mutex: lock_impl.Mutex,
                 buckets: [upper_bounds.len]V,
                 // this gets glued to our output_bucket_prefixes
                 attributes: []const u8,

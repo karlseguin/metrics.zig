@@ -1,4 +1,5 @@
 const std = @import("std");
+const lock_impl = @import("lock.zig");
 const Allocator = std.mem.Allocator;
 
 const m = @import("metric.zig");
@@ -130,7 +131,7 @@ pub fn CounterVec(comptime V: type, comptime L: type) type {
             vec: MetricVec(L),
             preamble: []const u8,
             allocator: Allocator,
-            lock: std.Thread.RwLock,
+            lock: lock_impl.RwLock,
             values: MetricVec(L).HashMap(Value),
 
             pub const Value = struct {
