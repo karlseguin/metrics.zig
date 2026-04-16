@@ -85,7 +85,7 @@ test "metrics: write" {
         const Timing = HistogramVec(u32, struct { path: []const u8 }, &.{ 5, 10, 25, 50, 100, 250, 500, 1000 });
     };
 
-    var m = M{ .active = Gauge(u64).init("active", .{}, .{}), .hits = try M.Hits.init(t.allocator, "hits", .{}, .{}), .timing = try M.Timing.init(t.allocator, "timing", .{ .help = "the timing" }, .{ .prefix = "x_" }) };
+    var m = M{ .active = Gauge(u64).init("active", .{}, .{}), .hits = try M.Hits.init(t.allocator, t.io, "hits", .{}, .{}), .timing = try M.Timing.init(t.allocator, t.io, "timing", .{ .help = "the timing" }, .{ .prefix = "x_" }) };
     defer m.hits.deinit();
     defer m.timing.deinit();
 
