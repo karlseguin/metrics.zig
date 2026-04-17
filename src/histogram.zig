@@ -1,5 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 
 const m = @import("metric.zig");
 const Metric = m.Metric;
@@ -144,10 +145,10 @@ pub fn HistogramVec(comptime V: type, comptime L: type, comptime upper_bounds: [
 
         const Self = @This();
 
-        pub fn init(allocator: Allocator, comptime name: []const u8, comptime opts: Opts, comptime ropts: RegistryOpts) !Self {
+        pub fn init(allocator: Allocator, io: Io, comptime name: []const u8, comptime opts: Opts, comptime ropts: RegistryOpts) !Self {
             switch (ropts.shouldExclude(name)) {
                 true => return .{ .noop = {} },
-                false => return .{ .impl = try Impl.init(allocator, ropts.prefix ++ name, opts) },
+                false => return .{ .impl = try Impl.init(allocator, io, ropts.prefix ++ name, opts) },
             }
         }
 
@@ -178,7 +179,8 @@ pub fn HistogramVec(comptime V: type, comptime L: type, comptime upper_bounds: [
             vec: MetricVec(L),
             preamble: []const u8,
             allocator: Allocator,
-            lock: std.Thread.RwLock,
+            io: Io,
+            lock: Io.RwLock,
             values: MetricVec(L).HashMap(Value),
             output_sum_prefix: []const u8,
             output_count_prefix: []const u8,
@@ -188,14 +190,14 @@ pub fn HistogramVec(comptime V: type, comptime L: type, comptime upper_bounds: [
             const Value = struct {
                 sum: V,
                 count: usize,
-                mutex: std.Thread.Mutex,
+                mutex: Io.Mutex,
                 buckets: [upper_bounds.len]V,
                 // this gets glued to our output_bucket_prefixes
                 attributes: []const u8,
 
-                fn observe(self: *Value, value: V, idx: ?usize) void {
-                    self.mutex.lock();
-                    defer self.mutex.unlock();
+                fn observe(self: *Value, io: Io, value: V, idx: ?usize) void {
+                    self.mutex.lockUncancelable(io);
+                    defer self.mutex.unlock(io);
                     self.observeLocked(value, idx);
                 }
 
@@ -217,7 +219,7 @@ pub fn HistogramVec(comptime V: type, comptime L: type, comptime upper_bounds: [
                 }
             };
 
-            pub fn init(allocator: Allocator, comptime name: []const u8, comptime opts: Opts) !Impl {
+            pub fn init(allocator: Allocator, io: Io, comptime name: []const u8, comptime opts: Opts) !Impl {
                 const vec = try MetricVec(L).init(name);
 
                 const output_sum_prefix = try std.fmt.allocPrint(allocator, "\n{s}_sum", .{name});
@@ -244,8 +246,9 @@ pub fn HistogramVec(comptime V: type, comptime L: type, comptime upper_bounds: [
 
                 return .{
                     .vec = vec,
-                    .lock = .{},
+                    .lock = .init,
                     .allocator = allocator,
+                    .io = io,
                     .values = MetricVec(L).HashMap(Value){},
                     .output_sum_prefix = output_sum_prefix,
                     .output_count_prefix = output_count_prefix,
@@ -274,6 +277,7 @@ pub fn HistogramVec(comptime V: type, comptime L: type, comptime upper_bounds: [
 
             pub fn observe(self: *Impl, labels: L, value: V) !void {
                 const allocator = self.allocator;
+                const io = self.io;
 
                 // do this outside any lock
                 const idx: ?usize = blk: {
@@ -288,10 +292,10 @@ pub fn HistogramVec(comptime V: type, comptime L: type, comptime upper_bounds: [
                 };
 
                 {
-                    self.lock.lockShared();
-                    defer self.lock.unlockShared();
+                    try self.lock.lockShared(io);
+                    defer self.lock.unlockShared(io);
                     if (self.values.getPtr(labels)) |existing| {
-                        existing.observe(value, idx);
+                        existing.observe(io, value, idx);
                         return;
                     }
                 }
@@ -308,13 +312,13 @@ pub fn HistogramVec(comptime V: type, comptime L: type, comptime upper_bounds: [
                 const histogram = Value{
                     .sum = 0,
                     .count = 0,
-                    .mutex = .{},
+                    .mutex = .init,
                     .attributes = attributes,
                     .buckets = std.mem.zeroes([upper_bounds.len]V),
                 };
 
-                self.lock.lock();
-                defer self.lock.unlock();
+                try self.lock.lock(io);
+                defer self.lock.unlock(io);
 
                 const gop = try self.values.getOrPut(allocator, owned_labels);
                 if (gop.found_existing) {
@@ -342,14 +346,15 @@ pub fn HistogramVec(comptime V: type, comptime L: type, comptime upper_bounds: [
             }
 
             pub fn write(self: *Impl, writer: *std.Io.Writer) !void {
+                const io = self.io;
                 try writer.writeAll(self.preamble);
 
                 const output_sum_prefix = self.output_sum_prefix;
                 const output_count_prefix = self.output_count_prefix;
                 const output_bucket_inf_prefix = self.output_bucket_inf_prefix;
 
-                self.lock.lockShared();
-                defer self.lock.unlockShared();
+                try self.lock.lockShared(io);
+                defer self.lock.unlockShared(io);
 
                 var it = self.values.iterator();
                 while (it.next()) |kv| {
@@ -358,14 +363,14 @@ pub fn HistogramVec(comptime V: type, comptime L: type, comptime upper_bounds: [
 
                     // copy our sum/count/bucket_counts out of Value into local variables
                     // to minimize our lock duration
-                    value.mutex.lock();
+                    try value.mutex.lock(io);
                     const buckets = &value.buckets;
                     const value_sum = value.sum;
                     const value_count = value.count;
                     for (buckets, 0..) |bucket_count, i| {
                         bucket_counts[i] = bucket_count;
                     }
-                    value.mutex.unlock();
+                    value.mutex.unlock(io);
 
                     const attributes = value.attributes;
                     // attributes contains the opening and closing braces: {k="v"}
@@ -494,20 +499,20 @@ test "Histogram: simple" {
         const buf = writer.writer.buffered();
         try t.expectString(
             \\# TYPE hst_1 histogram
-             \\hst_1_bucket{le="0.005"} 161
-             \\hst_1_bucket{le="0.01"} 231
-             \\hst_1_bucket{le="0.025"} 323
-             \\hst_1_bucket{le="0.05"} 393
-             \\hst_1_bucket{le="0.1"} 462
-             \\hst_1_bucket{le="0.25"} 554
-             \\hst_1_bucket{le="0.5"} 624
-             \\hst_1_bucket{le="1"} 694
-             \\hst_1_bucket{le="2.5"} 786
-             \\hst_1_bucket{le="5"} 856
-             \\hst_1_bucket{le="10"} 926
-             \\hst_1_bucket{le="+Inf"} 1001
-             \\hst_1_sum 2119.573719419178
-             \\hst_1_count 1001
+            \\hst_1_bucket{le="0.005"} 161
+            \\hst_1_bucket{le="0.01"} 231
+            \\hst_1_bucket{le="0.025"} 323
+            \\hst_1_bucket{le="0.05"} 393
+            \\hst_1_bucket{le="0.1"} 462
+            \\hst_1_bucket{le="0.25"} 554
+            \\hst_1_bucket{le="0.5"} 624
+            \\hst_1_bucket{le="1"} 694
+            \\hst_1_bucket{le="2.5"} 786
+            \\hst_1_bucket{le="5"} 856
+            \\hst_1_bucket{le="10"} 926
+            \\hst_1_bucket{le="+Inf"} 1001
+            \\hst_1_sum 2119.573719419178
+            \\hst_1_count 1001
             \\
         , buf);
     }
@@ -527,7 +532,7 @@ test "HistogramVec: noop " {
 }
 
 test "HistogramVec" {
-    var h = try HistogramVec(f64, struct { status: u16 }, &.{ 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10 }).init(t.allocator, "hst_1", .{}, .{});
+    var h = try HistogramVec(f64, struct { status: u16 }, &.{ 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10 }).init(t.allocator, t.io, "hst_1", .{}, .{});
     defer h.deinit();
 
     var i: f64 = 0.001;

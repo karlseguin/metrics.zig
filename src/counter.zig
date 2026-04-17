@@ -1,5 +1,6 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 
 const m = @import("metric.zig");
 const MetricVec = m.MetricVec;
@@ -84,10 +85,10 @@ pub fn CounterVec(comptime V: type, comptime L: type) type {
 
         const Self = @This();
 
-        pub fn init(allocator: Allocator, comptime name: []const u8, comptime opts: Opts, comptime ropts: RegistryOpts) !Self {
+        pub fn init(allocator: Allocator, io: Io, comptime name: []const u8, comptime opts: Opts, comptime ropts: RegistryOpts) !Self {
             switch (ropts.shouldExclude(name)) {
                 true => return .{ .noop = {} },
-                false => return .{ .impl = try Impl.init(allocator, ropts.prefix ++ name, opts) },
+                false => return .{ .impl = try Impl.init(allocator, io, ropts.prefix ++ name, opts) },
             }
         }
 
@@ -130,7 +131,8 @@ pub fn CounterVec(comptime V: type, comptime L: type) type {
             vec: MetricVec(L),
             preamble: []const u8,
             allocator: Allocator,
-            lock: std.Thread.RwLock,
+            io: Io,
+            lock: std.Io.RwLock,
             values: MetricVec(L).HashMap(Value),
 
             pub const Value = struct {
@@ -138,10 +140,11 @@ pub fn CounterVec(comptime V: type, comptime L: type) type {
                 attributes: []const u8,
             };
 
-            pub fn init(allocator: Allocator, comptime name: []const u8, comptime opts: Opts) !Impl {
+            pub fn init(allocator: Allocator, io: Io, comptime name: []const u8, comptime opts: Opts) !Impl {
                 return .{
-                    .lock = .{},
+                    .lock = .init,
                     .allocator = allocator,
+                    .io = io,
                     .vec = try MetricVec(L).init(name),
                     .values = MetricVec(L).HashMap(Value){},
                     .preamble = comptime m.preamble(name, .counter, false, opts.help),
@@ -165,10 +168,11 @@ pub fn CounterVec(comptime V: type, comptime L: type) type {
 
             pub fn incrBy(self: *Impl, labels: L, count: V) !void {
                 const allocator = self.allocator;
+                const io = self.io;
 
                 {
-                    self.lock.lockShared();
-                    defer self.lock.unlockShared();
+                    try self.lock.lockShared(io);
+                    defer self.lock.unlockShared(io);
                     if (self.values.getPtr(labels)) |existing| {
                         _ = @atomicRmw(V, &existing.count, .Add, count, .monotonic);
                         return;
@@ -189,8 +193,8 @@ pub fn CounterVec(comptime V: type, comptime L: type) type {
                     .attributes = attributes,
                 };
 
-                self.lock.lock();
-                defer self.lock.unlock();
+                try self.lock.lock(io);
+                defer self.lock.unlock(io);
 
                 const gop = try self.values.getOrPut(allocator, owned_labels);
                 if (gop.found_existing) {
@@ -204,9 +208,10 @@ pub fn CounterVec(comptime V: type, comptime L: type) type {
             }
 
             pub fn remove(self: *Impl, labels: L) void {
+                const io = self.io;
                 const kv = blk: {
-                    self.lock.lock();
-                    defer self.lock.unlock();
+                    self.lock.lockUncancelable(io);
+                    defer self.lock.unlock(io);
                     break :blk self.values.fetchRemove(labels) orelse return;
                 };
 
@@ -216,12 +221,13 @@ pub fn CounterVec(comptime V: type, comptime L: type) type {
             }
 
             pub fn write(self: *Impl, writer: *std.Io.Writer) !void {
+                const io = self.io;
                 try writer.writeAll(self.preamble);
 
                 const name = self.vec.name;
 
-                self.lock.lockShared();
-                defer self.lock.unlockShared();
+                try self.lock.lockShared(io);
+                defer self.lock.unlockShared(io);
 
                 var it = self.values.iterator();
                 while (it.next()) |kv| {
@@ -366,7 +372,7 @@ test "CounterVec: incr/incrBy + write" {
     const preamble = "# HELP counter_vec_1 h1\n# TYPE counter_vec_1 counter\n";
 
     // these should just not crash
-    var c = try CounterVec(u64, struct { id: []const u8 }).init(t.allocator, "counter_vec_1", .{ .help = "h1" }, .{});
+    var c = try CounterVec(u64, struct { id: []const u8 }).init(t.allocator, t.io, "counter_vec_1", .{ .help = "h1" }, .{});
     defer c.deinit();
 
     {
@@ -410,7 +416,7 @@ test "CounterVec: float incr/incrBy + write" {
     const preamble = "# HELP counter_vec_xx_2 h1\n# TYPE counter_vec_xx_2 counter\n";
 
     // these should just not crash
-    var c = try CounterVec(f32, struct { id: []const u8 }).init(t.allocator, "counter_vec_xx_2", .{ .help = "h1" }, .{});
+    var c = try CounterVec(f32, struct { id: []const u8 }).init(t.allocator, t.io, "counter_vec_xx_2", .{ .help = "h1" }, .{});
     defer c.deinit();
 
     {
@@ -456,7 +462,7 @@ test "Counter: concurrent create" {
         var writer: std.Io.Writer.Allocating = .init(t.allocator);
         defer writer.deinit();
 
-        var c = try EquitiesCounter.init(t.allocator, "counter_vec_concurrent", .{}, .{});
+        var c = try EquitiesCounter.init(t.allocator, t.io, "counter_vec_concurrent", .{}, .{});
         defer c.deinit();
 
         var th1 = try std.Thread.spawn(.{}, run, .{&c});
