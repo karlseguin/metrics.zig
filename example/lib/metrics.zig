@@ -36,11 +36,11 @@ pub fn latency(labels: LatencyLabel, value: f32) !void {
 	return metrics.latency.observe(labels, value);
 }
 
-pub fn initialize(allocator: Allocator, comptime opts: m.RegistryOpts) !void {
+pub fn initialize(allocator: Allocator, io: std.Io, comptime opts: m.RegistryOpts) !void {
 	metrics = .{
-		.hits = try Metrics.Hits.init(allocator, "lib_hits", .{}, opts),
+		.hits = try Metrics.Hits.init(allocator, io, "lib_hits", .{}, opts),
 		.active = Metrics.Active.init("lib_active", .{}, opts),
-		.latency = try Metrics.Latency.init(allocator, "lib_latency", .{}, opts),
+		.latency = try Metrics.Latency.init(allocator, io, "lib_latency", .{}, opts),
 	};
 }
 

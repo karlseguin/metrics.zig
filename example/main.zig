@@ -13,16 +13,16 @@ const m = @import("metrics");
 const lib = @import("lib/lib.zig");
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    const allocator = gpa.allocator();
+    var debug_allocator: std.heap.DebugAllocator(.{}) = .{ .backing_allocator = std.heap.smp_allocator };
+    const allocator = debug_allocator.allocator();
 
-    var threaded = std.Io.Threaded.init_single_threaded;
+    var threaded: std.Io.Threaded = .init_single_threaded;
     const io = threaded.io();
 
     // The application initializes the metrics for all the libraries it wishes
     // to get metrics from. Optionally, the application can force a metric
     // name prefix and can exclude specific metrics
-    try lib.initializeMetrics(allocator, .{
+    try lib.initializeMetrics(allocator, io, .{
         .prefix = "", // default to ""
         .exclude = null, // defaults to null
     });
