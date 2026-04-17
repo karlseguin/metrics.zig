@@ -5,6 +5,9 @@ It supports, counters, gauges and histograms and the labeled-variant of each.
 
 Please see the example project. It demonstrates how a <a href="https://github.com/karlseguin/metrics.zig/blob/master/example/lib/metrics.zig">library developer</a>, and how an <a href="https://github.com/karlseguin/metrics.zig/blob/master/example/main.zig">application developer</a> can initialize and output them.</a>
 
+## Zig Version
+This is for Zig 0.16.0. Use the [zig-0.15](https://github.com/karlseguin/metrics.zig/tree/zig-0.15) branch for Zig 0.15.2 or the [dev](https://github.com/karlseguin/metrics.zig/tree/dev) which may or may not be up to date with zig dev.
+
 ## Metric Setup
 Setup is a bit tedious, and I welcome suggestions for improvement. 
 
