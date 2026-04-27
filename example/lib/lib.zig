@@ -12,10 +12,10 @@ pub const writeMetrics = metrics.write;
 
 // We want to collect metrics about this
 pub fn doSomething() !void {
-  metrics.active(10);
+    metrics.active(10);
 
-  // vectored metrics can fail, hence the try
-  try metrics.hit(.{.status = 200, .path = "/robots.txt"});
+    // vectored metrics can fail, hence the try
+    try metrics.hit(.{ .status = 200, .path = "/robots.txt" });
 
-  try metrics.latency(.{.path = "/"}, 3.2);
+    try metrics.latency(.{ .path = "/" }, 3.2);
 }
