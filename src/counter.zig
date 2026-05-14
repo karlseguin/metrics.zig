@@ -475,3 +475,20 @@ test "Counter: concurrent create" {
         try t.expectString(preamble ++ "counter_vec_concurrent{symbol=\"AAPL\",type=\"trade\"} 2\n", buf);
     }
 }
+
+test "Counter: no lables" {
+    const preamble = "# TYPE counter_vec_empty counter\n";
+
+    const EmptyCounter = CounterVec(u64, struct {});
+    var writer: std.Io.Writer.Allocating = .init(t.allocator);
+    defer writer.deinit();
+
+    var c = try EmptyCounter.init(t.allocator, t.io, "counter_vec_empty", .{}, .{});
+    defer c.deinit();
+
+    try c.incr(.{});
+
+    try c.write(&writer.writer);
+    const buf = writer.writer.buffered();
+    try t.expectString(preamble ++ "counter_vec_empty 1\n", buf);
+}

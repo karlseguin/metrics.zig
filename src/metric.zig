@@ -120,6 +120,11 @@ pub fn MetricVec(comptime L: type) type {
         // this function builds the attribute string:
         //   "{status=\"200\"}\n"
         pub fn buildAttributes(allocator: Allocator, values: L) ![]const u8 {
+            if (fields.len == 0) {
+                const buf = try allocator.alloc(u8, 1);
+                buf[0] = ' ';
+                return buf;
+            }
 
             // We begin by serializing all the values in L. We only support a few label
             // types and some don't require allocation. The serializeValue function
