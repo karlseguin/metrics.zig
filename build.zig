@@ -26,9 +26,7 @@ pub fn build(b: *std.Build) !void {
 
         const run_example_cmd = b.addRunArtifact(example);
         run_example_cmd.step.dependOn(b.getInstallStep());
-        if (b.args) |args| {
-            run_example_cmd.addArgs(args);
-        }
+        run_example_cmd.addPassthruArgs();
         const run_step = b.step("run", "Run the app");
         run_step.dependOn(&run_example_cmd.step);
     }
