@@ -13,7 +13,7 @@ const m = @import("metrics");
 const lib = @import("lib/lib.zig");
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
     const allocator = gpa.allocator();
 
     var threaded = std.Io.Threaded.init_single_threaded;
@@ -22,7 +22,7 @@ pub fn main() !void {
     // The application initializes the metrics for all the libraries it wishes
     // to get metrics from. Optionally, the application can force a metric
     // name prefix and can exclude specific metrics
-    try lib.initializeMetrics(allocator, .{
+    try lib.initializeMetrics(allocator, io, .{
         .prefix = "", // default to ""
         .exclude = null, // defaults to null
     });
