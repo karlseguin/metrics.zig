@@ -20,14 +20,15 @@ pub fn MetricVec(comptime L: type) type {
         @compileError("Vec type must be a struct, got: " ++ @typeName(L));
     }
 
-    const fields = ti.@"struct".fields;
-    inline for (fields) |f| {
-        validateLabel(f.name, f.type);
+    const fnames = ti.@"struct".field_names;
+    const ftypes = ti.@"struct".field_types;
+    inline for (fnames, ftypes) |fname, ftype| {
+        validateLabel(fname, ftype);
     }
 
     // When we serialize attributes, we'll store each serialized attribute into
     // an array of this type.
-    const SerializedValues = [fields.len]SerializedValue;
+    const SerializedValues = [fnames.len]SerializedValue;
 
     // The length of the serialized attributes without the values.
     // If L is struct{status: int, path: []const u8}, then this would be the length
@@ -37,12 +38,12 @@ pub fn MetricVec(comptime L: type) type {
     const static_attribute_len = comptime blk: {
         // +2 for the '{' and  '}' around the entire attribute string
         // +1 for the trailing space
-        // +fields.len - 1 for the comma separator between attributes
-        var len: usize = 2 + 1 + fields.len - 1;
-        for (fields) |f| {
+        // +fnames.len - 1 for the comma separator between attributes
+        var len: usize = 2 + 1 + fnames.len - 1;
+        for (fnames) |fname| {
             // +1 for the '=' separator between attribute name and value
             // +2 for the '"' around the value
-            len += f.name.len + 3;
+            len += fname.len + 3;
         }
         break :blk len;
     };
@@ -53,7 +54,7 @@ pub fn MetricVec(comptime L: type) type {
         name: []const u8,
 
         // The label names (which are the names of L's fields)
-        labels: [fields.len][]const u8,
+        labels: [fnames.len][]const u8,
 
         // std.AutoHashMap doesn't handle structs with slices (i.e. []const u8) fields
         // So we create our own context (hash and eql) which supports the type allowed
@@ -67,9 +68,9 @@ pub fn MetricVec(comptime L: type) type {
         pub fn init(comptime name: []const u8) !Self {
             comptime validateName(name);
 
-            comptime var labels: [fields.len][]const u8 = undefined;
-            inline for (fields, 0..) |f, i| {
-                labels[i] = f.name;
+            comptime var labels: [fnames.len][]const u8 = undefined;
+            inline for (fnames, 0..) |fname, i| {
+                labels[i] = fname;
             }
 
             return .{
@@ -84,10 +85,10 @@ pub fn MetricVec(comptime L: type) type {
         // the only type that needs to be allocated is a []const u8.
         pub fn dupe(allocator: Allocator, value: L) !L {
             var owned: L = undefined;
-            inline for (fields) |f| {
-                switch (@typeInfo(f.type)) {
-                    .pointer => @field(owned, f.name) = try allocator.dupe(u8, @field(value, f.name)),
-                    else => @field(owned, f.name) = @field(value, f.name), // all other fields are primitives
+            inline for (fnames, ftypes) |fname, ftype| {
+                switch (@typeInfo(ftype)) {
+                    .pointer => @field(owned, fname) = try allocator.dupe(u8, @field(value, fname)),
+                    else => @field(owned, fname) = @field(value, fname), // all other fields are primitives
                 }
             }
             return owned;
@@ -95,9 +96,9 @@ pub fn MetricVec(comptime L: type) type {
 
         // Frees memory allocated by the above dupe function.
         pub fn free(allocator: Allocator, value: L) void {
-            inline for (fields) |f| {
-                switch (@typeInfo(f.type)) {
-                    .pointer => allocator.free(@field(value, f.name)),
+            inline for (fnames, ftypes) |fname, ftype| {
+                switch (@typeInfo(ftype)) {
+                    .pointer => allocator.free(@field(value, fname)),
                     else => {}, // all other fields are primitives
                 }
             }
@@ -128,8 +129,8 @@ pub fn MetricVec(comptime L: type) type {
             // took place. This is needed so that we can properly clean up.
             var len: usize = 0;
             var serialized: SerializedValues = undefined;
-            inline for (fields, 0..) |f, i| {
-                const s = try serializeValue(allocator, @field(values, f.name));
+            inline for (fnames, 0..) |fname, i| {
+                const s = try serializeValue(allocator, @field(values, fname));
                 serialized[i] = s;
                 len += s.str.len;
             }
@@ -145,10 +146,10 @@ pub fn MetricVec(comptime L: type) type {
             var buf = try allocator.alloc(u8, static_attribute_len + len);
             buf[0] = '{';
             var pos: usize = 1;
-            inline for (fields, 0..) |f, i| {
+            inline for (fnames, 0..) |fname, i| {
                 {
                     // write the key
-                    const value = f.name;
+                    const value = fname;
                     const end = pos + value.len;
                     @memcpy(buf[pos..end], value);
                     pos = end;
@@ -335,21 +336,22 @@ fn HashContext(comptime K: type) type {
     return struct {
         const Self = @This();
 
-        const fields = @typeInfo(K).@"struct".fields;
+        const fnames = @typeInfo(K).@"struct".field_names;
+        const ftypes = @typeInfo(K).@"struct".field_types;
 
         pub fn hash(_: Self, key: K) u64 {
             var hasher = Wyhash.init(0);
-            inline for (fields) |field| {
-                hashValue(&hasher, @field(key, field.name));
+            inline for (fnames) |fname| {
+                hashValue(&hasher, @field(key, fname));
             }
             return hasher.final();
         }
 
         // similar to std.mem.eql, but compares string values
         pub fn eql(_: Self, a: K, b: K) bool {
-            inline for (fields) |field| {
-                const value_a = @field(a, field.name);
-                const value_b = @field(b, field.name);
+            inline for (fnames) |fname| {
+                const value_a = @field(a, fname);
+                const value_b = @field(b, fname);
                 switch (@typeInfo(@TypeOf(value_a))) {
                     .pointer => if (std.mem.eql(u8, value_a, value_b) == false) return false,
                     else => if (value_a != value_b) return false,
